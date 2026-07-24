@@ -1,161 +1,239 @@
-// Centralized Cloud Database Synchronization Engine (100% Free Central Cloud Server API)
+/**
+ * MultiplayerManager — Vercel KV-backed Real-Time Sync
+ *
+ * Architecture:
+ *   - Rooms are created/joined via REST API (/api/rooms/create, /api/rooms/join)
+ *   - Full game state is stored in Vercel KV (Redis), keyed by room code
+ *   - All clients poll /api/rooms/state?code=XXX every POLL_INTERVAL ms
+ *   - The active player pushes new state after every action via POST /api/rooms/state
+ *   - Version numbers prevent stale overwrites (optimistic concurrency control)
+ */
 
-const CENTRAL_CLOUD_DB_URL = 'https://api.restful-api.dev/objects/ff8081819f7e10ae019f92da7e851e0b';
-const LOCAL_CACHE_KEY = 'monopoly_central_server_state_v1';
+const POLL_INTERVAL = 1500; // ms
 
 export class MultiplayerManager {
   constructor(gameEngine) {
     this.engine = gameEngine;
-    this.roomCode = 'MONO-GE';
+    this.roomCode = null;
     this.isHost = false;
-    this.listeners = [];
-    this.onStateSynced = null;
-    this.lastStateHash = '';
-    this.isUpdatingCloud = false;
+    this._token = null;
+    this._pollTimer = null;
+    this._version = 0;
+    this._pushing = false;
 
-    // 1. Multi-tab local channel for instant zero-latency same-device sync
-    try {
-      this.channel = new BroadcastChannel('monopoly_central_channel');
-      this.channel.onmessage = (e) => {
-        if (e.data && e.data.type === 'CENTRAL_STATE_SYNC') {
-          this.applySerializedState(e.data.state);
-          if (this.onStateSynced) this.onStateSynced(e.data.state);
-          this.notify();
-        }
-      };
-    } catch (e) {}
+    // Callbacks
+    this.onStateSynced = null;     // (gameState) => void — called on every incoming state update
+    this.onPlayerJoined = null;    // (player) => void
+    this.onError = null;           // (message) => void
 
-    // 2. High-Frequency Centralized Cloud Polling Loop (every 1.2s across all devices worldwide)
-    setInterval(() => {
-      this.fetchCentralCloudState();
-    }, 1200);
-
-    // Initial fetch from Central Cloud Server
-    this.fetchCentralCloudState();
+    this._listeners = [];
   }
 
-  async fetchCentralCloudState() {
-    if (this.isUpdatingCloud) return;
-    try {
-      const res = await fetch(CENTRAL_CLOUD_DB_URL);
-      if (res.ok) {
-        const json = await res.json();
-        if (json && json.data) {
-          const cloudState = json.data;
-          const hash = JSON.stringify(cloudState);
-          if (hash !== this.lastStateHash) {
-            this.lastStateHash = hash;
-            this.applySerializedState(cloudState);
-            if (this.onStateSynced) this.onStateSynced(cloudState);
-            this.notify();
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('Central Cloud Server fetch warning:', e);
-    }
+  // ── Setup ─────────────────────────────────────────────────────────────────
+
+  setToken(token) {
+    this._token = token;
   }
 
-  async pushCentralCloudState(state) {
-    this.isUpdatingCloud = true;
-    try {
-      const payload = {
-        name: 'MONOPOLY_GLOBAL_SESSION',
-        data: state
-      };
-      const res = await fetch(CENTRAL_CLOUD_DB_URL, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      if (res.ok) {
-        this.lastStateHash = JSON.stringify(state);
-      }
-    } catch (e) {
-      console.warn('Central Cloud Server PUT warning:', e);
-    } finally {
-      this.isUpdatingCloud = false;
-    }
+  get _headers() {
+    return {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${this._token}`
+    };
   }
 
-  async createLobby(hostUser) {
-    this.roomCode = 'MONO-GE';
+  // ── Room Lifecycle ────────────────────────────────────────────────────────
+
+  /**
+   * Create a new room and become the host.
+   * @returns {string} roomCode
+   */
+  async createRoom(user) {
+    const res = await fetch('/api/rooms/create', {
+      method: 'POST',
+      headers: this._headers,
+      body: JSON.stringify({ hostName: user.username })
+    });
+
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to create room');
+
+    this.roomCode = data.roomCode;
     this.isHost = true;
+    this._version = data.room.version;
 
-    await this.fetchCentralCloudState();
+    // Sync local engine with server player list
+    this._applyRoomPlayers(data.room.players);
 
-    // Register Master GE in Central Cloud Store
-    this.engine.addPlayer({ id: 'usr_ge', name: 'GE', isAI: false, color: '#38bdf8' });
-    this.broadcastState();
-    return this.roomCode;
+    this._startPolling();
+    return data.roomCode;
   }
 
-  async joinLobby(roomCode, user) {
-    this.roomCode = (roomCode || 'MONO-GE').trim().toUpperCase();
-    this.isHost = false;
+  /**
+   * Join an existing room by code.
+   */
+  async joinRoom(roomCode, user) {
+    const code = (roomCode || '').trim().toUpperCase();
+    const res = await fetch('/api/rooms/join', {
+      method: 'POST',
+      headers: this._headers,
+      body: JSON.stringify({ roomCode: code })
+    });
 
-    // Fetch latest Central Cloud DB state before joining
-    await this.fetchCentralCloudState();
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to join room');
 
-    // Register guest player in Central Cloud Store
-    let existingPlayer = this.engine.players.find(p => p.name.toLowerCase() === user.username.toLowerCase());
-    if (existingPlayer) {
-      existingPlayer.id = user.id || existingPlayer.id;
+    this.roomCode = code;
+    this.isHost = data.room.hostId === user.id;
+    this._version = data.room.version;
+
+    // Apply server room state to local engine
+    if (data.room.gameState) {
+      this._applySerializedState(data.room.gameState);
     } else {
-      const colors = ['#f59e0b', '#10b981', '#ef4444', '#a855f7', '#ec4899'];
-      const color = colors[this.engine.players.length % colors.length];
-      this.engine.addPlayer({ id: user.id || 'usr_' + Date.now(), name: user.username, isAI: false, color });
+      this._applyRoomPlayers(data.room.players);
     }
 
-    this.broadcastState();
+    this._startPolling();
+    return data.room;
   }
 
+  // ── Polling ───────────────────────────────────────────────────────────────
+
+  _startPolling() {
+    this._stopPolling();
+    // Immediate first poll, then interval
+    this._poll();
+    this._pollTimer = setInterval(() => this._poll(), POLL_INTERVAL);
+  }
+
+  _stopPolling() {
+    if (this._pollTimer) {
+      clearInterval(this._pollTimer);
+      this._pollTimer = null;
+    }
+  }
+
+  async _poll() {
+    if (!this.roomCode) return;
+    try {
+      const res = await fetch(`/api/rooms/state?code=${this.roomCode}`);
+      if (!res.ok) return;
+
+      const room = await res.json();
+
+      // Only apply if server has newer state than what we have
+      if (room.version > this._version) {
+        this._version = room.version;
+
+        if (room.gameState) {
+          this._applySerializedState(room.gameState);
+        } else {
+          this._applyRoomPlayers(room.players);
+        }
+
+        if (this.onStateSynced) {
+          this.onStateSynced(room.gameState || { players: room.players, status: room.status });
+        }
+
+        this._notify();
+      }
+    } catch (err) {
+      // Network blips are normal — don't spam console
+    }
+  }
+
+  // ── State Push ────────────────────────────────────────────────────────────
+
+  /**
+   * Serialize local engine state and push to server.
+   * Debounced — if a push is in-flight, skip.
+   */
+  async broadcastState() {
+    if (!this.roomCode || this._pushing) return;
+    this._pushing = true;
+
+    const state = this._getSerializedState();
+    const nextVersion = this._version + 1;
+
+    try {
+      const res = await fetch('/api/rooms/state', {
+        method: 'POST',
+        headers: this._headers,
+        body: JSON.stringify({
+          roomCode: this.roomCode,
+          gameState: state,
+          version: nextVersion
+        })
+      });
+
+      const data = await res.json();
+
+      if (res.status === 409) {
+        // Version conflict — re-poll and try again
+        console.warn('[MP] Version conflict, re-polling...');
+        await this._poll();
+      } else if (res.ok) {
+        this._version = data.version;
+      }
+    } catch (err) {
+      console.warn('[MP] Push failed:', err.message);
+    } finally {
+      this._pushing = false;
+      this._notify();
+    }
+  }
+
+  // ── Game Actions ──────────────────────────────────────────────────────────
+
+  /**
+   * Execute a game action locally, then push new state.
+   */
   sendAction(action, payload) {
-    this.executeAction(action, payload);
+    this._executeAction(action, payload);
     this.broadcastState();
   }
 
-  executeAction(action, payload) {
+  _executeAction(action, payload) {
     const activePlayer = this.engine.getCurrentPlayer();
+
     if (action === 'START_GAME') {
       this.engine.startGame();
     } else if (action === 'ROLL_DICE') {
-      this.engine.rollDice();
+      return this.engine.rollDice();
     } else if (action === 'END_TURN') {
       this.engine.nextTurn();
     } else if (action === 'BUY_PROPERTY') {
-      const p = (payload && payload.playerId) ? this.engine.players.find(player => player.id === payload.playerId) : activePlayer;
+      const p = payload?.playerId
+        ? this.engine.players.find(pl => pl.id === payload.playerId)
+        : activePlayer;
       if (p) this.engine.buyProperty(p, payload.tileId);
     } else if (action === 'BUILD_HOUSE') {
-      const p = (payload && payload.playerId) ? this.engine.players.find(player => player.id === payload.playerId) : activePlayer;
+      const p = payload?.playerId
+        ? this.engine.players.find(pl => pl.id === payload.playerId)
+        : activePlayer;
       if (p) this.engine.buildHouse(p, payload.tileId);
     } else if (action === 'SELL_HOUSE') {
-      const p = (payload && payload.playerId) ? this.engine.players.find(player => player.id === payload.playerId) : activePlayer;
+      const p = payload?.playerId
+        ? this.engine.players.find(pl => pl.id === payload.playerId)
+        : activePlayer;
       if (p) this.engine.sellHouse(p, payload.tileId);
     } else if (action === 'MORTGAGE') {
-      const p = (payload && payload.playerId) ? this.engine.players.find(player => player.id === payload.playerId) : activePlayer;
+      const p = payload?.playerId
+        ? this.engine.players.find(pl => pl.id === payload.playerId)
+        : activePlayer;
       if (p) this.engine.mortgageProperty(p, payload.tileId);
     } else if (action === 'UNMORTGAGE') {
-      const p = (payload && payload.playerId) ? this.engine.players.find(player => player.id === payload.playerId) : activePlayer;
+      const p = payload?.playerId
+        ? this.engine.players.find(pl => pl.id === payload.playerId)
+        : activePlayer;
       if (p) this.engine.unmortgageProperty(p, payload.tileId);
     } else if (action === 'BANKRUPT') {
-      const p = (payload && payload.playerId) ? this.engine.players.find(player => player.id === payload.playerId) : activePlayer;
+      const p = payload?.playerId
+        ? this.engine.players.find(pl => pl.id === payload.playerId)
+        : activePlayer;
       if (p) this.engine.declareBankruptcy(p);
     }
-  }
-
-  broadcastState() {
-    const state = this.getSerializedState();
-    localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(state));
-
-    if (this.channel) {
-      try {
-        this.channel.postMessage({ type: 'CENTRAL_STATE_SYNC', state });
-      } catch (e) {}
-    }
-
-    this.pushCentralCloudState(state);
-    this.notify();
   }
 
   addAIBot() {
@@ -165,28 +243,21 @@ export class MultiplayerManager {
     const botName = botNames[botNum - 1] || `Bot #${botNum}`;
     const colors = ['#10b981', '#ef4444', '#a855f7', '#f59e0b'];
     const color = colors[this.engine.players.length % colors.length];
-
     this.engine.addPlayer({ id: 'bot_' + Date.now(), name: botName, isAI: true, color });
     this.broadcastState();
     return true;
   }
 
-  subscribe(callback) {
-    this.listeners.push(callback);
-  }
+  // ── State Serialization ───────────────────────────────────────────────────
 
-  notify() {
-    this.listeners.forEach(cb => cb(this.getSerializedState()));
-  }
-
-  getSerializedState() {
+  _getSerializedState() {
     return {
       roomCode: this.roomCode,
       status: this.engine.status,
       players: this.engine.players,
       currentTurnIndex: this.engine.currentTurnIndex,
       hasRolled: this.engine.hasRolled,
-      activeTrade: this.engine.tradeManager.activeTrade,
+      activeTrade: this.engine.tradeManager ? this.engine.tradeManager.activeTrade : null,
       boardState: this.engine.boardState,
       freeParkingJackpot: this.engine.freeParkingJackpot,
       rules: this.engine.rules,
@@ -194,35 +265,55 @@ export class MultiplayerManager {
     };
   }
 
-  applySerializedState(state) {
+  _applySerializedState(state) {
     if (!state) return;
-    this.roomCode = state.roomCode || 'MONO-GE';
+
+    if (state.roomCode) this.roomCode = state.roomCode;
     this.engine.status = state.status || 'LOBBY';
 
-    if (state.players && Array.isArray(state.players)) {
-      const uniquePlayers = [];
-      const seenNames = new Set();
-      state.players.forEach(p => {
-        if (p && p.name) {
-          const key = String(p.name).trim().toLowerCase();
-          if (!seenNames.has(key)) {
-            seenNames.add(key);
-            uniquePlayers.push(p);
-          }
-        }
+    if (Array.isArray(state.players)) {
+      // Deduplicate by id
+      const seen = new Set();
+      this.engine.players = state.players.filter(p => {
+        if (!p || !p.id || seen.has(p.id)) return false;
+        seen.add(p.id);
+        return true;
       });
-      this.engine.players = uniquePlayers;
     }
 
-    this.engine.currentTurnIndex = state.currentTurnIndex || 0;
-    this.engine.hasRolled = state.hasRolled || false;
-    this.engine.tradeManager.activeTrade = state.activeTrade;
+    this.engine.currentTurnIndex = state.currentTurnIndex ?? 0;
+    this.engine.hasRolled = state.hasRolled ?? false;
+    if (this.engine.tradeManager) {
+      this.engine.tradeManager.activeTrade = state.activeTrade || null;
+    }
     this.engine.boardState = state.boardState || {};
-    this.engine.freeParkingJackpot = state.freeParkingJackpot || 0;
-    this.engine.rules = state.rules || this.engine.rules;
+    this.engine.freeParkingJackpot = state.freeParkingJackpot ?? 0;
+    if (state.rules) this.engine.rules = { ...this.engine.rules, ...state.rules };
     this.engine.logs = state.logs || [];
 
+    // Update room code display
     const el = document.getElementById('inviteCodeText');
-    if (el) el.innerText = this.roomCode;
+    if (el && this.roomCode) el.innerText = this.roomCode;
+  }
+
+  _applyRoomPlayers(players) {
+    if (!Array.isArray(players)) return;
+    const seen = new Set();
+    this.engine.players = players.filter(p => {
+      if (!p || !p.id || seen.has(p.id)) return false;
+      seen.add(p.id);
+      return true;
+    });
+  }
+
+  // ── Pub/Sub ───────────────────────────────────────────────────────────────
+
+  subscribe(callback) {
+    this._listeners.push(callback);
+  }
+
+  _notify() {
+    const state = this._getSerializedState();
+    this._listeners.forEach(cb => cb(state));
   }
 }

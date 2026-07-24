@@ -3,19 +3,112 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Monopoly</title>
-  <meta name="description" content="Production-ready browser-based multiplayer Monopoly game.">
-  
+  <title>Monopoly — Online Multiplayer</title>
+  <meta name="description" content="Real-time multiplayer Monopoly — play with friends worldwide.">
+
   <!-- Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;900&display=swap" rel="stylesheet">
-  
+
   <!-- Stylesheets -->
   <link rel="stylesheet" href="./src/css/main.css">
   <link rel="stylesheet" href="./src/css/board.css">
   <link rel="stylesheet" href="./src/css/modal.css">
   <link rel="stylesheet" href="./src/css/admin.css">
+
+  <style>
+    /* ── Login Form Styles ──────────────────────────────────────────────────── */
+    .login-form {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      margin: 24px 0;
+    }
+
+    .login-input-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      text-align: left;
+    }
+
+    .login-input-group label {
+      font-size: 0.82rem;
+      font-weight: 700;
+      color: var(--text-muted, #94a3b8);
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    .login-input {
+      width: 100%;
+      padding: 13px 16px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.06);
+      color: var(--text-main, #f1f5f9);
+      font-size: 1rem;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+      box-sizing: border-box;
+    }
+
+    .login-input:focus {
+      border-color: var(--accent-primary, #38bdf8);
+      box-shadow: 0 0 0 3px rgba(56,189,248,0.18);
+    }
+
+    .login-input::placeholder {
+      color: rgba(255,255,255,0.3);
+    }
+
+    .login-hint {
+      font-size: 0.78rem;
+      color: var(--text-muted, #64748b);
+      text-align: center;
+      margin-top: 4px;
+      line-height: 1.5;
+    }
+
+    .login-hint strong {
+      color: var(--accent-gold, #f59e0b);
+    }
+
+    #loginStatusMsg {
+      min-height: 1.4em;
+      font-size: 0.88rem;
+      text-align: center;
+      color: var(--text-muted, #64748b);
+      transition: color 0.2s;
+    }
+
+    .connection-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: var(--text-muted, #64748b);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+
+    .connection-badge .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #22c55e;
+      animation: pulse-dot 2s infinite;
+    }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%       { opacity: 0.5; transform: scale(0.75); }
+    }
+  </style>
 </head>
 <body>
 
@@ -34,46 +127,91 @@
       </div>
     </header>
 
-    <!-- 1. LANDING & LOGIN SCREEN -->
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <!-- 1. LOGIN SCREEN                                            -->
+    <!-- ══════════════════════════════════════════════════════════ -->
     <section id="loginScreen" class="screen-view active">
       <div class="screen-card">
         <div class="hero-brand">🎲 MONOPOLY</div>
-        <p class="hero-subtitle">Production-Ready Single Global Game Session</p>
+        <div class="connection-badge">
+          <span class="dot"></span>
+          Live Server Connected
+        </div>
+        <p class="hero-subtitle">Enter your name to join or create a room</p>
 
-        <div style="margin: 24px 0; display: flex; flex-direction: column; gap: 14px;">
-          <button class="btn btn-accent" id="btnLoginGE" style="padding: 16px; font-size: 1.05rem; font-weight: 800; justify-content: center;">
-            👑 Master GE Login
-          </button>
+        <form class="login-form" id="loginForm" autocomplete="off">
+          <div class="login-input-group">
+            <label for="loginUsername">Your Name</label>
+            <input
+              type="text"
+              id="loginUsername"
+              class="login-input"
+              placeholder="e.g. Alice, GE, Bob…"
+              maxlength="24"
+              autocomplete="off"
+              required
+            >
+          </div>
 
-          <button class="btn btn-primary" id="btnLoginPlayer" style="padding: 16px; font-size: 1.05rem; font-weight: 800; justify-content: center;">
-            👤 Join as Player
+          <div class="login-input-group">
+            <label for="loginPassword">Password <span style="font-weight:400;text-transform:none;">(optional for most players)</span></label>
+            <input
+              type="password"
+              id="loginPassword"
+              class="login-input"
+              placeholder="Leave blank to skip"
+              autocomplete="current-password"
+            >
+          </div>
+
+          <div id="loginStatusMsg"></div>
+
+          <button type="submit" class="btn btn-primary" id="btnLoginSubmit" style="padding: 15px; font-size: 1.05rem; font-weight: 800; justify-content: center;">
+            🚀 Enter Game
           </button>
+        </form>
+
+        <div class="login-hint">
+          New players are registered automatically.<br>
+          <strong>Host GE</strong> requires the master password to control the game.
         </div>
       </div>
     </section>
 
-    <!-- 2. GAME SETUP & LOBBY SCREEN -->
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <!-- 2. LOBBY SCREEN                                            -->
+    <!-- ══════════════════════════════════════════════════════════ -->
     <section id="lobbyScreen" class="screen-view">
       <div class="screen-card" style="max-width: 600px;">
         <div class="screen-header" style="margin-bottom: 16px; text-align: center;">
-          <h2 style="color: var(--accent-primary);">🎮 Game Setup Lobby</h2>
-          <div style="font-size: 0.9rem; color: var(--text-muted); margin-top: 4px;">Logged in as: <strong id="lobbyLoggedUser" style="color: var(--accent-warn);">GE</strong></div>
+          <h2 style="color: var(--accent-primary);">🎮 Game Lobby</h2>
+          <div style="font-size: 0.9rem; color: var(--text-muted); margin-top: 4px;">
+            Logged in as: <strong id="lobbyLoggedUser" style="color: var(--accent-warn);">—</strong>
+          </div>
         </div>
 
-        <!-- WebRTC Online Room Banner -->
+        <!-- Room Code Banner -->
         <div style="background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 12px; padding: 14px; margin-bottom: 20px; text-align: center;">
-          <div style="font-size: 0.85rem; color: var(--text-muted); font-weight: 700;">🌐 ONLINE ROOM CODE</div>
-          <div style="font-size: 1.6rem; font-weight: 900; letter-spacing: 2px; color: var(--accent-neon-blue); margin: 4px 0;" id="inviteCodeText">MONO-GE</div>
-          <div style="display: flex; gap: 8px; justify-content: center; margin-top: 8px;">
-            <button class="btn btn-sm" id="btnCopyInviteLink" style="padding: 6px 12px; font-size: 0.8rem;">📋 Copy Direct Join Link</button>
+          <div style="font-size: 0.85rem; color: var(--text-muted); font-weight: 700;">🌐 ROOM CODE — share with friends</div>
+          <div style="font-size: 2rem; font-weight: 900; letter-spacing: 4px; color: var(--accent-neon-blue, #38bdf8); margin: 6px 0; font-family: monospace;" id="inviteCodeText">——</div>
+          <div style="display: flex; gap: 8px; justify-content: center; margin-top: 10px; flex-wrap: wrap;">
+            <button class="btn btn-sm" id="btnCopyInviteLink" style="padding: 6px 14px; font-size: 0.82rem;">📋 Copy Join Link</button>
           </div>
-          <div style="display: flex; gap: 8px; margin-top: 10px; justify-content: center;" id="joinRoomInputContainer">
-            <input type="text" id="inputJoinRoomCode" placeholder="Room Code (e.g. MONO-GE)" class="form-input" style="max-width: 220px; font-size: 0.85rem; padding: 6px 10px; text-transform: uppercase;">
-            <button class="btn btn-emerald btn-sm" id="btnJoinRoomSubmit" style="padding: 6px 12px; font-size: 0.8rem;">🔗 Join Room</button>
+          <!-- Join by code (for non-host players) -->
+          <div style="display: flex; gap: 8px; margin-top: 12px; justify-content: center;" id="joinRoomInputContainer">
+            <input
+              type="text"
+              id="inputJoinRoomCode"
+              placeholder="Enter room code…"
+              class="form-input"
+              style="max-width: 200px; font-size: 0.85rem; padding: 6px 10px; text-transform: uppercase; letter-spacing: 2px; font-family: monospace;"
+              maxlength="6"
+            >
+            <button class="btn btn-emerald btn-sm" id="btnJoinRoomSubmit" style="padding: 6px 14px; font-size: 0.82rem;">🔗 Join Room</button>
           </div>
         </div>
 
-        <!-- Master Controls (Shown ONLY to GE) -->
+        <!-- Host Controls (shown only to GE / admin) -->
         <div id="geMasterControls" style="display: none;">
           <div style="background: var(--surface-variant); border: 1px solid var(--surface-border); border-radius: 12px; padding: 16px; margin-bottom: 20px;">
             <h3 style="color: var(--accent-warn); margin-bottom: 12px;">⚙️ Pre-Game Rules & Cash Setup</h3>
@@ -134,12 +272,13 @@
           </button>
         </div>
 
-        <!-- Waiting Screen (Shown to Non-GE Players) -->
+        <!-- Guest waiting notice -->
         <div id="guestWaitingNotice" style="display: none; text-align: center; padding: 20px; background: var(--surface-variant); border-radius: 12px; margin-bottom: 20px;">
           <div style="font-size: 1.8rem; margin-bottom: 8px;">⏳</div>
-          <h3 style="color: var(--accent-warn);">Waiting for Game Master GE</h3>
+          <h3 style="color: var(--accent-warn);">Waiting for Game Host</h3>
           <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 6px;">
-            Only player <strong>GE</strong> can configure rules and start the game session.
+            The host will start the game once everyone is in the lobby.<br>
+            You'll be taken to the board automatically.
           </p>
         </div>
 
@@ -151,16 +290,15 @@
       </div>
     </section>
 
-    <!-- 3. MAIN GAME BOARD SCREEN -->
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <!-- 3. MAIN GAME BOARD SCREEN                                  -->
+    <!-- ══════════════════════════════════════════════════════════ -->
     <main id="gameScreen" class="game-container screen-view">
-      <!-- 40 Tile Board Container -->
       <div id="boardContainer"></div>
-
-      <!-- Action Panel & Activity Logs -->
       <div id="controlsContainer"></div>
     </main>
 
-    <!-- Admin Panel Overlay Modal -->
+    <!-- Admin Panel Overlay -->
     <div class="modal-backdrop" id="adminModalBackdrop">
       <div class="modal-content" style="max-width: 900px;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">

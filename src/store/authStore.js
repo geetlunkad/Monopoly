@@ -1,95 +1,93 @@
-// Authentication Store & User Account Storage (Zero-cost Local Storage DB)
+/**
+ * Authentication Store — API-backed
+ *
+ * Replaces the localStorage-only user database with real API calls
+ * to /api/auth/login and /api/auth/me. The session token is stored
+ * in localStorage, but user data comes from the server.
+ */
 
-const DB_KEY = 'monopoly_user_db';
-const SESSION_KEY = 'monopoly_active_session';
+const TOKEN_KEY = 'monopoly_auth_token_v2';
 
 export class AuthStore {
   constructor() {
-    this.initDB();
+    this._token = localStorage.getItem(TOKEN_KEY) || null;
+    this._user = null;   // populated after validateSession()
+    this._validated = false;
   }
 
-  initDB() {
-    let users = JSON.parse(localStorage.getItem(DB_KEY) || '[]');
-    if (users.length === 0) {
-      users = [
-        { id: 'usr_admin', username: 'admin', password: 'adminpassword', role: 'ADMIN', avatar: '👑', banned: false, createdAt: Date.now() },
-        { id: 'usr_ge', username: 'GE', password: 'geetelectric', role: 'PLAYER', avatar: '🚀', banned: false, createdAt: Date.now() },
-        { id: 'usr_player1', username: 'PlayerOne', password: '123', role: 'PLAYER', avatar: '🎩', banned: false, createdAt: Date.now() }
-      ];
-      localStorage.setItem(DB_KEY, JSON.stringify(users));
-    } else {
-      // Ensure GE account password is updated to 'geetelectric'
-      const geUser = users.find(u => u.username.toLowerCase() === 'ge');
-      if (geUser && geUser.password !== 'geetelectric') {
-        geUser.password = 'geetelectric';
-        localStorage.setItem(DB_KEY, JSON.stringify(users));
+  /**
+   * Log in (or auto-register) a player.
+   * @returns {{ success: boolean, user?: object, error?: string }}
+   */
+  async login(username, password = '') {
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: username.trim(), password })
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        return { success: false, error: data.error || 'Login failed' };
       }
+
+      this._token = data.token;
+      this._user = data.user;
+      this._validated = true;
+      localStorage.setItem(TOKEN_KEY, data.token);
+
+      return { success: true, user: data.user };
+    } catch (err) {
+      console.error('[AuthStore] login error:', err);
+      return { success: false, error: 'Server unreachable. Is the server running?' };
     }
   }
 
-  getUsers() {
-    return JSON.parse(localStorage.getItem(DB_KEY) || '[]');
-  }
+  /**
+   * Validate a stored token and refresh _user.
+   * Call this on app startup to restore session.
+   * @returns {object|null} user or null
+   */
+  async validateSession() {
+    if (this._validated && this._user) return this._user;
+    if (!this._token) return null;
 
-  saveUsers(users) {
-    localStorage.setItem(DB_KEY, JSON.stringify(users));
-  }
+    try {
+      const res = await fetch('/api/auth/me', {
+        headers: { 'Authorization': `Bearer ${this._token}` }
+      });
 
-  login(username, password) {
-    const users = this.getUsers();
-    let user = users.find(u => u.username.toLowerCase() === username.toLowerCase());
-
-    if (!user) {
-      // Auto-create new user account if not existing (except protected GE)
-      if (username.toLowerCase() === 'ge') {
-        return { success: false, error: 'Incorrect password for Master GE' };
+      if (!res.ok) {
+        this.logout();
+        return null;
       }
-      const reg = this.register(username, password || '123456');
-      if (!reg.success) return reg;
-      user = reg.user;
-    } else {
-      // For GE account, strictly enforce password 'geetelectric'
-      if (user.username.toLowerCase() === 'ge' && password !== 'geetelectric') {
-        return { success: false, error: 'Incorrect password for Master GE (Password is: geetelectric)' };
-      }
+
+      const data = await res.json();
+      this._user = data.user;
+      this._validated = true;
+      return data.user;
+    } catch (err) {
+      console.warn('[AuthStore] Session validation failed (server may be offline)');
+      return null;
     }
-
-    if (user.banned) return { success: false, error: 'This account has been banned by the admin.' };
-
-    const session = { id: user.id, username: user.username, role: user.role, avatar: user.avatar };
-    localStorage.setItem(SESSION_KEY, JSON.stringify(session));
-    return { success: true, user: session };
   }
 
-  register(username, password, avatar = '🎲', role = 'PLAYER') {
-    const users = this.getUsers();
-    if (users.some(u => u.username.toLowerCase() === username.toLowerCase())) {
-      const existing = users.find(u => u.username.toLowerCase() === username.toLowerCase());
-      return { success: true, user: existing };
-    }
-
-    const newUser = {
-      id: 'usr_' + Date.now(),
-      username,
-      password: password || '123456',
-      role: role || 'PLAYER',
-      avatar,
-      banned: false,
-      createdAt: Date.now()
-    };
-
-    users.push(newUser);
-    this.saveUsers(users);
-    return { success: true, user: newUser };
-  }
-
+  /** Synchronous — returns cached user (null if not yet validated). */
   getCurrentUser() {
-    const session = localStorage.getItem(SESSION_KEY);
-    return session ? JSON.parse(session) : null;
+    return this._user;
+  }
+
+  getToken() {
+    return this._token;
   }
 
   logout() {
-    localStorage.removeItem(SESSION_KEY);
+    this._token = null;
+    this._user = null;
+    this._validated = false;
+    localStorage.removeItem(TOKEN_KEY);
   }
 }
 
