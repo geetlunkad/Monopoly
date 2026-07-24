@@ -1,0 +1,264 @@
+/* High-Contrast Solid Surface Modals & Buy Menus */
+
+.modal-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.75);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+.modal-backdrop.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.modal-content {
+  background: #1e293b;
+  border: 2px solid #334155;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.8);
+  border-radius: 16px;
+  width: 92%;
+  max-width: 520px;
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: 20px;
+  color: #f8fafc;
+  transform: translateY(15px) scale(0.97);
+  transition: transform 0.2s ease;
+  position: relative;
+}
+
+.modal-backdrop.active .modal-content {
+  transform: translateY(0) scale(1);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  border-bottom: 2px solid #334155;
+  padding-bottom: 12px;
+}
+
+.modal-title {
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.close-btn {
+  background: #334155;
+  border: none;
+  color: #f8fafc;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  font-size: 1.1rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.close-btn:hover {
+  background: #ef4444;
+  color: #ffffff;
+}
+
+/* Property Deed Card Modal */
+.deed-card {
+  background: #0f172a;
+  border-radius: 12px;
+  border: 2px solid #334155;
+  overflow: hidden;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+}
+
+.deed-header {
+  padding: 14px;
+  text-align: center;
+  color: #ffffff;
+  font-weight: 800;
+  font-size: 1.15rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.6);
+}
+
+.deed-body {
+  padding: 16px;
+  background: #0f172a;
+}
+
+.deed-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.9rem;
+  padding: 8px 0;
+  border-bottom: 1px solid #1e293b;
+  color: #cbd5e1;
+}
+
+.deed-row span {
+  color: #94a3b8;
+}
+
+.deed-row strong {
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.deed-row:last-child {
+  border-bottom: none;
+}
+
+/* Trade Offer Window */
+.trade-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin: 16px 0;
+}
+
+.trade-column {
+  background: #0f172a;
+  border: 1.5px solid #334155;
+  border-radius: 12px;
+  padding: 14px;
+}
+
+.trade-column-title {
+  font-weight: 800;
+  font-size: 0.95rem;
+  color: #f59e0b;
+  margin-bottom: 10px;
+}
+
+.property-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.property-check-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  background: #1e293b;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: #f8fafc;
+}
+
+/* Live Auction Window */
+.auction-box {
+  text-align: center;
+}
+
+.timer-circle {
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  background: #0f172a;
+  border: 4px solid #f59e0b;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.8rem;
+  font-weight: 900;
+  margin: 12px auto;
+  color: #f59e0b;
+}
+
+.current-bid {
+  font-size: 2.2rem;
+  font-weight: 900;
+  color: #10b981;
+  margin: 8px 0;
+}
+
+.bid-controls {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+/* Custom Settings Form */
+.setting-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 0;
+  border-bottom: 1px solid #334155;
+}
+
+.setting-label {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.setting-desc {
+  font-size: 0.8rem;
+  color: #94a3b8;
+}
+
+/* Toggle Switch */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 46px;
+  height: 26px;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-color: #475569;
+  transition: .2s;
+  border-radius: 26px;
+}
+
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 20px;
+  width: 20px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  transition: .2s;
+  border-radius: 50%;
+}
+
+input:checked + .slider {
+  background-color: #38bdf8;
+}
+
+input:checked + .slider:before {
+  transform: translateX(20px);
+}
