@@ -1,4 +1,4 @@
-// Real-time WebRTC Multiplayer Room Manager (PeerJS - 100% Free Zero-Cost Cross-Device Sync)
+// Real-time WebRTC Multiplayer Room Manager (PeerJS - 100% Free Cross-Device Sync)
 
 const Peer = window.Peer || class {};
 
@@ -8,18 +8,19 @@ export class MultiplayerManager {
     this.roomCode = null;
     this.isHost = false;
     this.peer = null;
-    this.connections = []; // Host's active connections to guests
+    this.connections = []; // Host's connections to guests
     this.hostConn = null;  // Guest's connection to host
-    this.spectators = [];
     this.listeners = [];
+    this.onStateSynced = null;
   }
 
   createLobby(hostUser) {
+    // Standardize Master GE host room code
     const randomId = Math.random().toString(36).substring(2, 6).toUpperCase();
-    this.roomCode = `MONO-${randomId}`;
+    this.roomCode = hostUser.username === 'GE' ? `MONO-GE` : `MONO-${randomId}`;
     this.isHost = true;
     this.engine.reset();
-    this.engine.addPlayer(hostUser.id || 'p_host', hostUser.username || 'Host', '#38bdf8', false);
+    this.engine.addPlayer(hostUser.id || 'p_ge', hostUser.username || 'GE', '#38bdf8', false);
 
     this.initPeerServer(this.roomCode);
     return this.roomCode;
@@ -35,14 +36,15 @@ export class MultiplayerManager {
             { urls: 'stun:stun1.l.google.com:19302' },
             { urls: 'stun:stun2.l.google.com:19302' },
             { urls: 'stun:stun3.l.google.com:19302' },
-            { urls: 'stun:stun4.l.google.com:19302' }
+            { urls: 'stun:stun4.l.google.com:19302' },
+            { urls: 'stun:global.stun.twilio.com:3478' }
           ]
         }
       };
       this.peer = new Peer(peerId, peerConfig);
 
       this.peer.on('open', (id) => {
-        console.log('PeerJS server initialized with Room Code:', id);
+        console.log('PeerJS Host Server listening on Room Code:', id);
         this.engine.addLog(`🌐 WebRTC Room live! Invite Code: ${id}`);
         this.notify();
       });
@@ -61,14 +63,22 @@ export class MultiplayerManager {
           this.broadcastState();
         });
 
-        // Send current game state to new connected peer
+        // Immediately send full state snapshot to connected peer
         setTimeout(() => {
-          conn.send({ type: 'SYNC_STATE', state: this.getSerializedState() });
-        }, 500);
+          if (conn.open) {
+            conn.send({ type: 'SYNC_STATE', state: this.getSerializedState() });
+          }
+        }, 300);
       });
 
       this.peer.on('error', (err) => {
-        console.warn('PeerJS Error:', err);
+        console.warn('PeerJS Host Warning/Error:', err);
+        // Fallback to random ID if ID taken
+        if (err.type === 'unavailable-id') {
+          const fallbackId = `MONO-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+          this.roomCode = fallbackId;
+          this.initPeerServer(fallbackId);
+        }
       });
     } catch (e) {
       console.error('Failed to init PeerJS:', e);
@@ -89,14 +99,16 @@ export class MultiplayerManager {
             { urls: 'stun:stun1.l.google.com:19302' },
             { urls: 'stun:stun2.l.google.com:19302' },
             { urls: 'stun:stun3.l.google.com:19302' },
-            { urls: 'stun:stun4.l.google.com:19302' }
+            { urls: 'stun:stun4.l.google.com:19302' },
+            { urls: 'stun:global.stun.twilio.com:3478' }
           ]
         }
       };
       this.peer = new Peer(peerConfig);
+
       this.peer.on('open', (myId) => {
         console.log('Guest Peer initialized with ID:', myId);
-        this.hostConn = this.peer.connect(cleanCode);
+        this.hostConn = this.peer.connect(cleanCode, { reliable: true });
 
         this.hostConn.on('open', () => {
           console.log('Connected to host room:', cleanCode);
@@ -110,6 +122,7 @@ export class MultiplayerManager {
         this.hostConn.on('data', (data) => {
           if (data.type === 'SYNC_STATE') {
             this.applySerializedState(data.state);
+            if (this.onStateSynced) this.onStateSynced(data.state);
             this.notify();
           }
         });
@@ -120,7 +133,7 @@ export class MultiplayerManager {
       });
 
       this.peer.on('error', (err) => {
-        alert(`Failed to join room ${cleanCode}. Check code and try again.`);
+        console.warn('Guest Peer Error:', err);
         if (onJoined) onJoined(false);
       });
     } catch (e) {
@@ -135,41 +148,50 @@ export class MultiplayerManager {
     if (data.type === 'JOIN_REQUEST') {
       const user = data.user;
       const existing = this.engine.players.find(p => p.id === user.id || p.name === user.username);
-      if (!existing) {
-        if (this.engine.players.length >= 8) {
-          this.spectators.push(user);
-          this.engine.addLog(`👀 ${user.username} joined as a Spectator.`);
-        } else {
-          this.engine.addPlayer(user.id, user.username, null, false);
-        }
+      if (!existing && this.engine.players.length < 8) {
+        this.engine.addPlayer(user.id, user.username, null, false);
       }
       this.broadcastState();
     } else if (data.type === 'PLAYER_ACTION') {
-      // Execute incoming player action on host engine
-      const { action, payload } = data;
-      if (action === 'ROLL_DICE') {
-        this.engine.rollDice();
-      } else if (action === 'END_TURN') {
-        this.engine.nextTurn();
-      } else if (action === 'BUY_PROPERTY') {
-        const p = this.engine.players.find(player => player.id === payload.playerId);
-        if (p) this.engine.buyProperty(p, payload.tileId);
-      } else if (action === 'BUILD_HOUSE') {
-        const p = this.engine.players.find(player => player.id === payload.playerId);
-        if (p) this.engine.buildHouse(p, payload.tileId);
-      }
+      this.executeAction(data.action, data.payload);
       this.broadcastState();
+    }
+  }
+
+  executeAction(action, payload) {
+    const activePlayer = this.engine.getCurrentPlayer();
+    if (action === 'START_GAME') {
+      this.engine.startGame();
+    } else if (action === 'ROLL_DICE') {
+      this.engine.rollDice();
+    } else if (action === 'END_TURN') {
+      this.engine.nextTurn();
+    } else if (action === 'BUY_PROPERTY') {
+      const p = (payload && payload.playerId) ? this.engine.players.find(player => player.id === payload.playerId) : activePlayer;
+      if (p) this.engine.buyProperty(p, payload.tileId);
+    } else if (action === 'BUILD_HOUSE') {
+      const p = (payload && payload.playerId) ? this.engine.players.find(player => player.id === payload.playerId) : activePlayer;
+      if (p) this.engine.buildHouse(p, payload.tileId);
+    } else if (action === 'SELL_HOUSE') {
+      const p = (payload && payload.playerId) ? this.engine.players.find(player => player.id === payload.playerId) : activePlayer;
+      if (p) this.engine.sellHouse(p, payload.tileId);
+    } else if (action === 'MORTGAGE') {
+      const p = (payload && payload.playerId) ? this.engine.players.find(player => player.id === payload.playerId) : activePlayer;
+      if (p) this.engine.mortgageProperty(p, payload.tileId);
+    } else if (action === 'UNMORTGAGE') {
+      const p = (payload && payload.playerId) ? this.engine.players.find(player => player.id === payload.playerId) : activePlayer;
+      if (p) this.engine.unmortgageProperty(p, payload.tileId);
+    } else if (action === 'BANKRUPT') {
+      const p = (payload && payload.playerId) ? this.engine.players.find(player => player.id === payload.playerId) : activePlayer;
+      if (p) this.engine.declareBankruptcy(p);
     }
   }
 
   sendAction(action, payload) {
     if (this.isHost) {
-      // Host executes locally and broadcasts
-      if (action === 'ROLL_DICE') this.engine.rollDice();
-      if (action === 'END_TURN') this.engine.nextTurn();
+      this.executeAction(action, payload);
       this.broadcastState();
-    } else if (this.hostConn) {
-      // Guest sends action to host
+    } else if (this.hostConn && this.hostConn.open) {
       this.hostConn.send({ type: 'PLAYER_ACTION', action, payload });
     }
   }
@@ -232,6 +254,7 @@ export class MultiplayerManager {
     this.engine.rules = state.rules;
     this.engine.logs = state.logs;
 
-    document.getElementById('inviteCodeText').innerText = state.roomCode;
+    const el = document.getElementById('inviteCodeText');
+    if (el) el.innerText = state.roomCode || 'MONO-GE';
   }
 }

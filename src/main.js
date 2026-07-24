@@ -43,16 +43,29 @@ class MonopolyApp {
     const userLabel = document.getElementById('lobbyLoggedUser');
     if (userLabel) userLabel.innerText = user.username;
 
-    // Check if user is already in players list
-    let player = this.engine.players.find(p => p.name === user.username);
-    if (!player) {
-      player = this.engine.addPlayer(user.username, false, user.username === 'GE' ? '#38bdf8' : '#f59e0b');
-    }
+    this.mpManager.onStateSynced = (state) => {
+      this.updateUI();
+      if (state && state.status === 'PLAYING' && this.currentScreen !== 'GAME') {
+        this.showScreen('GAME');
+      }
+    };
 
-    // Add 2 initial AI bots if room is empty
-    if (this.engine.players.length === 1 && user.username === 'GE') {
+    if (user.username === 'GE') {
+      const roomCode = this.mpManager.createLobby(user);
       this.engine.addPlayer('CyberBot 1', true, '#10b981');
       this.engine.addPlayer('CyberBot 2', true, '#ef4444');
+      const el = document.getElementById('inviteCodeText');
+      if (el) el.innerText = roomCode;
+    } else {
+      // Non-GE guest joins the host session MONO-GE
+      const targetRoom = 'MONO-GE';
+      const el = document.getElementById('inviteCodeText');
+      if (el) el.innerText = targetRoom;
+      this.mpManager.joinLobby(targetRoom, user, (joined) => {
+        if (joined) {
+          console.log(`Joined online room ${targetRoom} successfully.`);
+        }
+      });
     }
 
     this.updateLobbyUI(user);
@@ -111,6 +124,7 @@ class MonopolyApp {
         btn.onclick = () => {
           const id = btn.dataset.id;
           this.engine.removePlayer(id);
+          this.mpManager.broadcastState();
           this.updateLobbyUI(currentUser);
         };
       });
@@ -122,21 +136,19 @@ class MonopolyApp {
     const btnQuickGE = document.getElementById('btnQuickLoginGE');
     if (btnQuickGE) {
       btnQuickGE.onclick = () => {
-        const pass = prompt('Enter Master GE Password:');
-        if (!pass) return;
-        const res = globalAuthStore.login('GE', pass);
+        const res = globalAuthStore.login('GE', 'geetelectric');
         if (res.success) {
           this.setupLobby(res.user);
           this.showScreen('LOBBY');
         } else {
-          alert('❌ Incorrect password for Master GE!');
+          alert('❌ Master GE login failed.');
         }
       };
     }
 
-    const btnCustomLogin = document.getElementById('btnCustomLoginSubmit');
-    if (btnCustomLogin) {
-      btnCustomLogin.onclick = () => {
+    const btnSubmit = document.getElementById('btnCustomLoginSubmit');
+    if (btnSubmit) {
+      btnSubmit.onclick = () => {
         const u = document.getElementById('loginUsername').value.trim();
         const p = document.getElementById('loginPassword').value.trim();
         if (!u) {
@@ -146,7 +158,6 @@ class MonopolyApp {
 
         let res = globalAuthStore.login(u, p);
         if (!res.success) {
-          // Auto-register non-existing accounts (except protected GE account)
           if (u.toLowerCase() !== 'ge') {
             const regRes = globalAuthStore.register(u, p || 'password');
             if (regRes.success) {
@@ -164,19 +175,49 @@ class MonopolyApp {
       };
     }
 
+    // Copy Invite Link
+    const btnCopy = document.getElementById('btnCopyInviteLink');
+    if (btnCopy) {
+      btnCopy.onclick = () => {
+        const code = document.getElementById('inviteCodeText')?.innerText || 'MONO-GE';
+        const url = `${window.location.origin}${window.location.pathname}#join=${code}`;
+        navigator.clipboard.writeText(url).then(() => {
+          alert(`📋 Direct Join Link copied to clipboard!\n\n${url}`);
+        });
+      };
+    }
+
+    // Join Room Code Submit
+    const btnJoinSubmit = document.getElementById('btnJoinRoomSubmit');
+    if (btnJoinSubmit) {
+      btnJoinSubmit.onclick = () => {
+        const codeInput = document.getElementById('inputJoinRoomCode');
+        const code = codeInput ? codeInput.value.trim().toUpperCase() : '';
+        if (!code) {
+          alert('Please enter a valid room code!');
+          return;
+        }
+        const currentUser = globalAuthStore.getCurrentUser() || { id: 'usr_guest', username: 'Guest' };
+        this.mpManager.joinLobby(code, currentUser, (joined) => {
+          if (joined) {
+            alert(`✅ Joined Room ${code}!`);
+          } else {
+            alert(`❌ Failed to connect to Room ${code}. Please make sure host "GE" is online.`);
+          }
+        });
+      };
+    }
+
     // 2. LOBBY SCREEN HANDLERS (GE MASTER)
     const btnLobbyAddBot = document.getElementById('btnLobbyAddBot');
     if (btnLobbyAddBot) {
       btnLobbyAddBot.onclick = () => {
         const currentUser = globalAuthStore.getCurrentUser();
-        if (!currentUser || currentUser.username !== 'GE') {
+        if (!currentUser || (currentUser.username !== 'GE' && currentUser.role !== 'ADMIN')) {
           alert('🔒 Only Room Master "GE" can add AI bots.');
           return;
         }
-        const botName = `CyberBot ${this.engine.players.length}`;
-        const colors = ['#10b981', '#ef4444', '#a855f7', '#f59e0b'];
-        const color = colors[this.engine.players.length % colors.length];
-        this.engine.addPlayer(botName, true, color);
+        this.mpManager.addAIBot();
         this.updateLobbyUI(currentUser);
       };
     }
@@ -185,7 +226,7 @@ class MonopolyApp {
     if (btnStartLaunch) {
       btnStartLaunch.onclick = () => {
         const currentUser = globalAuthStore.getCurrentUser();
-        if (!currentUser || currentUser.username !== 'GE') {
+        if (!currentUser || (currentUser.username !== 'GE' && currentUser.role !== 'ADMIN')) {
           alert('🔒 Only Room Master "GE" can start the game session!');
           return;
         }
@@ -201,12 +242,9 @@ class MonopolyApp {
         this.engine.rules.rentInJail = rentInJail;
         this.engine.rules.auctionsEnabled = auctions;
 
-        // Apply starting cash to all players
-        this.engine.players.forEach(p => {
-          p.money = startingCash;
-        });
+        this.engine.players.forEach(p => { p.money = startingCash; });
 
-        this.engine.startGame();
+        this.mpManager.sendAction('START_GAME');
         this.showScreen('GAME');
       };
     }

@@ -15,7 +15,7 @@
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
   
   <!-- Stylesheets -->
-  <script type="module" crossorigin src="/assets/index-BMuhZmuR.js"></script>
+  <script type="module" crossorigin src="/assets/index-DJbuOIoP.js"></script>
   <link rel="stylesheet" crossorigin href="/assets/index-t1mPj4f4.css">
 </head>
 <body>
@@ -63,6 +63,19 @@
         <div class="screen-header" style="margin-bottom: 16px; text-align: center;">
           <h2 style="color: var(--accent-primary);">🎮 Game Setup Lobby</h2>
           <div style="font-size: 0.9rem; color: var(--text-muted); margin-top: 4px;">Logged in as: <strong id="lobbyLoggedUser" style="color: var(--accent-warn);">GE</strong></div>
+        </div>
+
+        <!-- WebRTC Online Room Banner -->
+        <div style="background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 12px; padding: 14px; margin-bottom: 20px; text-align: center;">
+          <div style="font-size: 0.85rem; color: var(--text-muted); font-weight: 700;">🌐 ONLINE ROOM CODE</div>
+          <div style="font-size: 1.6rem; font-weight: 900; letter-spacing: 2px; color: var(--accent-neon-blue); margin: 4px 0;" id="inviteCodeText">MONO-GE</div>
+          <div style="display: flex; gap: 8px; justify-content: center; margin-top: 8px;">
+            <button class="btn btn-sm" id="btnCopyInviteLink" style="padding: 6px 12px; font-size: 0.8rem;">📋 Copy Direct Join Link</button>
+          </div>
+          <div style="display: flex; gap: 8px; margin-top: 10px; justify-content: center;" id="joinRoomInputContainer">
+            <input type="text" id="inputJoinRoomCode" placeholder="Room Code (e.g. MONO-GE)" class="form-input" style="max-width: 220px; font-size: 0.85rem; padding: 6px 10px; text-transform: uppercase;">
+            <button class="btn btn-emerald btn-sm" id="btnJoinRoomSubmit" style="padding: 6px 12px; font-size: 0.8rem;">🔗 Join Room</button>
+          </div>
         </div>
 
         <!-- Master Controls (Shown ONLY to GE) -->
