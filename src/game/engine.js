@@ -40,7 +40,11 @@ export class GameEngine {
       turnTimeLimitSec: 45
     };
 
-    // Initialize board ownership & houses
+    this.initBoardState();
+  }
+
+  initBoardState() {
+    this.boardState = {};
     BOARD_TILES.forEach(tile => {
       this.boardState[tile.id] = {
         ownerId: null,
@@ -54,20 +58,50 @@ export class GameEngine {
     this.communityDeck = [...COMMUNITY_CHEST_CARDS].sort(() => Math.random() - 0.5);
   }
 
-  addPlayer(name, isAI = false, color = null) {
+  addPlayer(arg1, arg2 = false, arg3 = null, arg4 = null) {
     if (this.players.length >= 8) return false;
-    const id = 'p_' + String(name).replace(/\s+/g, '_') + '_' + Date.now();
+
+    let id, name, isAI, color;
+
+    if (typeof arg1 === 'object' && arg1 !== null) {
+      id = arg1.id;
+      name = arg1.name || arg1.username;
+      isAI = !!arg1.isAI;
+      color = arg1.color;
+    } else if (typeof arg1 === 'string' && (arg1.startsWith('usr_') || arg1.startsWith('p_') || arg1.startsWith('bot_'))) {
+      id = arg1;
+      name = String(arg2);
+      color = arg3;
+      isAI = (arg4 === true);
+    } else {
+      name = String(arg1);
+      isAI = (arg2 === true);
+      color = arg3;
+      id = arg4;
+    }
+
+    if (!name || name === 'true' || name === 'false' || name.startsWith('usr_') || name.startsWith('p_')) {
+      if (id && !id.startsWith('usr_') && !id.startsWith('p_')) {
+        name = id;
+      } else {
+        name = (arg2 && typeof arg2 === 'string' && !arg2.startsWith('usr_')) ? arg2 : 'Player ' + (this.players.length + 1);
+      }
+    }
+
+    const playerID = id || ('p_' + String(name).replace(/\s+/g, '_') + '_' + Date.now());
+    const playerColor = color || ['#38bdf8', '#f59e0b', '#10b981', '#ef4444', '#a855f7', '#ec4899'][this.players.length % 6];
+
     const newPlayer = {
-      id,
-      name: String(name),
-      color: color || ['#38bdf8', '#f59e0b', '#10b981', '#ef4444', '#a855f7', '#ec4899'][this.players.length % 6],
+      id: playerID,
+      name: name,
+      color: playerColor,
       money: this.rules.startingCash,
       position: 0,
       inJail: false,
       jailTurns: 0,
       jailCards: 0,
       bankrupt: false,
-      isAI: !!isAI,
+      isAI: isAI,
       stats: {
         turnsPlayed: 0,
         propertiesOwned: 0,
@@ -77,8 +111,16 @@ export class GameEngine {
         rentCollected: 0
       }
     };
-    this.players.push(newPlayer);
+
+    const existingIdx = this.players.findIndex(p => p.id === newPlayer.id || p.name === newPlayer.name);
+    if (existingIdx !== -1) {
+      this.players[existingIdx] = newPlayer;
+    } else {
+      this.players.push(newPlayer);
+    }
+
     this.addLog(`${name} joined the game!`);
+    if (this.onStateChange) this.onStateChange();
     return newPlayer;
   }
 
@@ -96,11 +138,12 @@ export class GameEngine {
   }
 
   startGame() {
-    if (this.players.length < 2) return false;
+    if (this.players.length < 1) return false;
     this.status = 'PLAYING';
     this.currentTurnIndex = 0;
     this.hasRolled = false;
-    this.addLog(`🎲 Game started! ${this.getCurrentPlayer().name}'s turn.`);
+    this.addLog(`🎲 Game started! ${this.getCurrentPlayer() ? this.getCurrentPlayer().name : 'Player'}'s turn.`);
+    if (this.onStateChange) this.onStateChange();
     return true;
   }
 
@@ -117,19 +160,20 @@ export class GameEngine {
 
     // Skip bankrupt players
     let count = 0;
-    while (this.players[nextIndex].bankrupt && count < this.players.length) {
+    while (this.players[nextIndex] && this.players[nextIndex].bankrupt && count < this.players.length) {
       nextIndex = (nextIndex + 1) % this.players.length;
       count++;
     }
 
     this.currentTurnIndex = nextIndex;
     const activePlayer = this.getCurrentPlayer();
-    activePlayer.stats.turnsPlayed++;
-    this.addLog(`👉 It is now ${activePlayer.name}'s turn.`);
+    if (activePlayer) {
+      activePlayer.stats.turnsPlayed++;
+      this.addLog(`👉 It is now ${activePlayer.name}'s turn.`);
 
-    // Check if AI turn
-    if (activePlayer.isAI && !activePlayer.bankrupt) {
-      setTimeout(() => this.handleAITurn(), 1200);
+      if (activePlayer.isAI && !activePlayer.bankrupt) {
+        setTimeout(() => this.handleAITurn(), 1200);
+      }
     }
   }
 
@@ -155,10 +199,8 @@ export class GameEngine {
         this.hasRolled = true;
         return roll;
       }
-      // Bonus roll granted for doubles
       this.hasRolled = false;
     } else {
-      // Non-double roll: cannot roll again until next turn
       this.hasRolled = true;
     }
 
@@ -178,7 +220,6 @@ export class GameEngine {
 
     player.position = newPosition;
 
-    // Check passing GO
     if (!isDirectMove && collectGo && newPosition < prevPosition) {
       const salary = (newPosition === 0 && this.rules.doubleSalaryOnExactGo)
         ? this.rules.salaryPassGo * 2
@@ -196,63 +237,46 @@ export class GameEngine {
   handleTileLanding(player, tile) {
     const state = this.boardState[tile.id];
 
-    switch (tile.type) {
-      case 'PROPERTY':
-      case 'RAILROAD':
-      case 'UTILITY':
-        if (!state.ownerId) {
-          this.addLog(`🏠 ${tile.name} is available for $${tile.price}.`);
-        } else if (state.ownerId !== player.id && !state.mortgaged) {
-          const owner = this.players.find(p => p.id === state.ownerId);
-          
-          // Check rent in jail rule
-          if (owner.inJail && !this.rules.rentInJail) {
-            this.addLog(`🔒 ${owner.name} is in jail and cannot collect rent.`);
-            return;
-          }
+    if (tile.type === 'TAX') {
+      const taxAmount = tile.taxAmount || 100;
+      player.money -= taxAmount;
+      this.addLog(`💸 ${player.name} paid $${taxAmount} in ${tile.name}.`);
+      if (this.rules.freeParkingJackpotEnabled && this.rules.taxToJackpot) {
+        this.freeParkingJackpot += taxAmount;
+      }
+      this.checkBankruptcy(player);
+    } else if (tile.type === 'GO_TO_JAIL') {
+      this.sendToJail(player, 'Landed on Go to Jail');
+    } else if (tile.type === 'FREE_PARKING' && this.rules.freeParkingJackpotEnabled) {
+      if (this.freeParkingJackpot > 0) {
+        player.money += this.freeParkingJackpot;
+        this.addLog(`🎁 ${player.name} claimed Free Parking Jackpot of $${this.freeParkingJackpot}!`);
+        this.freeParkingJackpot = 0;
+      }
+    } else if (tile.type === 'CHANCE') {
+      this.drawCard(player, 'CHANCE');
+    } else if (tile.type === 'COMMUNITY_CHEST') {
+      this.drawCard(player, 'COMMUNITY_CHEST');
+    } else if (tile.price > 0 && state && state.ownerId && state.ownerId !== player.id) {
+      const owner = this.players.find(p => p.id === state.ownerId);
+      if (owner && !owner.bankrupt) {
+        if (owner.inJail && !this.rules.rentInJail) {
+          this.addLog(`🙈 ${owner.name} is in Jail and cannot collect rent.`);
+          return;
+        }
 
-          const rent = this.calculateRent(tile.id);
+        const rent = this.calculateRent(tile.id);
+        if (rent > 0) {
           this.payPlayer(player, owner, rent, `Rent for ${tile.name}`);
         }
-        break;
-
-      case 'TAX':
-        const tax = tile.taxAmount;
-        player.money -= tax;
-        this.addLog(`💸 ${player.name} paid $${tax} in taxes.`);
-        if (this.rules.freeParkingJackpotEnabled && this.rules.taxToJackpot) {
-          this.freeParkingJackpot += tax;
-          this.addLog(`💰 $${tax} added to Free Parking Jackpot! Current total: $${this.freeParkingJackpot}`);
-        }
-        break;
-
-      case 'FREE_PARKING':
-        if (this.rules.freeParkingJackpotEnabled && this.freeParkingJackpot > 0) {
-          const jackpot = this.freeParkingJackpot;
-          player.money += jackpot;
-          this.addLog(`🎉 ${player.name} won the Free Parking Jackpot of $${jackpot}!`);
-          this.freeParkingJackpot = 0;
-        }
-        break;
-
-      case 'GO_TO_JAIL':
-        this.sendToJail(player, 'Landed on Go To Jail');
-        break;
-
-      case 'CHANCE':
-        this.drawCard(player, 'CHANCE');
-        break;
-
-      case 'COMMUNITY':
-        this.drawCard(player, 'COMMUNITY');
-        break;
+      }
     }
   }
 
   calculateRent(tileId) {
     const tile = BOARD_TILES[tileId];
     const state = this.boardState[tileId];
-    const ownerId = state.ownerId;
+    const ownerId = state ? state.ownerId : null;
 
     if (!ownerId || state.mortgaged) return 0;
 
@@ -260,7 +284,6 @@ export class GameEngine {
       if (state.hotel) return tile.rent[5];
       if (state.houses > 0) return tile.rent[state.houses];
       
-      // Check full color monopoly (doubles rent for un-improved properties)
       const groupTiles = PROPERTY_GROUPS[tile.group];
       const ownsAll = groupTiles.every(id => this.boardState[id].ownerId === ownerId);
       return ownsAll ? tile.rent[0] * 2 : tile.rent[0];
@@ -269,7 +292,7 @@ export class GameEngine {
       return tile.rent[ownedRRs - 1] || 25;
     } else if (tile.type === 'UTILITY') {
       const ownedUtilities = PROPERTY_GROUPS.UTILITY.filter(id => this.boardState[id].ownerId === ownerId).length;
-      const lastRoll = 7; // Average fallback
+      const lastRoll = this.lastRollSum || 7;
       return ownedUtilities === 2 ? lastRoll * 10 : lastRoll * 4;
     }
 
@@ -286,6 +309,7 @@ export class GameEngine {
     state.ownerId = player.id;
     player.stats.propertiesOwned++;
     this.addLog(`🔑 ${player.name} bought ${tile.name} for $${tile.price}.`);
+    if (this.onStateChange) this.onStateChange();
     return true;
   }
 
@@ -302,18 +326,15 @@ export class GameEngine {
 
     if (!tile || tile.type !== 'PROPERTY' || !state || state.ownerId !== player.id || state.mortgaged || player.money < tile.houseCost) return false;
 
-    // Check Monopoly ownership requirement
     const groupTiles = PROPERTY_GROUPS[tile.group];
     const ownsMonopoly = groupTiles.every(id => this.boardState[id].ownerId === player.id);
     if (!ownsMonopoly) return false;
 
-    // Check if any property in group is mortgaged
     if (groupTiles.some(id => this.boardState[id].mortgaged)) return false;
 
     const currentLevel = this.getEffectiveBuildingLevel(tileId);
-    if (currentLevel >= 5) return false; // Already has Hotel
+    if (currentLevel >= 5) return false;
 
-    // Check Even Building Rule
     if (this.rules.evenBuildingRule) {
       const minLevel = Math.min(...groupTiles.map(id => this.getEffectiveBuildingLevel(id)));
       if (currentLevel > minLevel) return false;
@@ -334,6 +355,7 @@ export class GameEngine {
       player.money -= tile.houseCost;
       player.stats.housesBuilt++;
       this.addLog(`🏗️ ${player.name} built house #${state.houses} on ${tile.name}.`);
+      if (this.onStateChange) this.onStateChange();
       return true;
     } else if (currentLevel === 4) {
       state.houses = 0;
@@ -341,6 +363,7 @@ export class GameEngine {
       player.money -= tile.houseCost;
       player.stats.hotelsBuilt++;
       this.addLog(`🏨 ${player.name} upgraded to a HOTEL on ${tile.name}!`);
+      if (this.onStateChange) this.onStateChange();
       return true;
     }
 
@@ -357,7 +380,6 @@ export class GameEngine {
     const currentLevel = this.getEffectiveBuildingLevel(tileId);
     if (currentLevel <= 0) return false;
 
-    // Check Even Selling Rule
     if (this.rules.evenBuildingRule) {
       const maxLevel = Math.max(...groupTiles.map(id => this.getEffectiveBuildingLevel(id)));
       if (currentLevel < maxLevel) return false;
@@ -367,14 +389,16 @@ export class GameEngine {
 
     if (state.hotel) {
       state.hotel = false;
-      state.houses = 4; // Hotel degrades back to 4 houses
+      state.houses = 4;
       player.money += refund;
       this.addLog(`💵 ${player.name} sold HOTEL on ${tile.name} for $${refund} (degraded to 4 houses).`);
+      if (this.onStateChange) this.onStateChange();
       return true;
     } else if (state.houses > 0) {
       state.houses--;
       player.money += refund;
       this.addLog(`💵 ${player.name} sold 1 house on ${tile.name} for $${refund}.`);
+      if (this.onStateChange) this.onStateChange();
       return true;
     }
 
@@ -387,7 +411,6 @@ export class GameEngine {
 
     if (!tile || state.ownerId !== player.id || state.mortgaged) return false;
 
-    // Cannot mortgage if property has buildings or group has buildings
     if (tile.type === 'PROPERTY') {
       const groupTiles = PROPERTY_GROUPS[tile.group];
       const hasBuildings = groupTiles.some(id => this.getEffectiveBuildingLevel(id) > 0);
@@ -408,7 +431,7 @@ export class GameEngine {
 
     if (!tile || state.ownerId !== player.id || !state.mortgaged) return false;
 
-    const unmortgageCost = Math.floor(tile.price * 0.55); // 50% principal + 10% interest
+    const unmortgageCost = Math.floor(tile.price * 0.55);
     if (player.money < unmortgageCost) return false;
 
     player.money -= unmortgageCost;
@@ -423,7 +446,6 @@ export class GameEngine {
 
     this.addLog(`💥 ${player.name} declared voluntary BANKRUPTCY!`);
 
-    // Liquidate & relinquish properties back to Bank
     Object.keys(this.boardState).forEach(tileId => {
       const state = this.boardState[tileId];
       if (state.ownerId === player.id) {
@@ -437,7 +459,6 @@ export class GameEngine {
     player.money = 0;
     player.bankrupt = true;
 
-    // Check winner
     const activePlayers = this.players.filter(p => !p.bankrupt);
     if (activePlayers.length === 1) {
       this.status = 'FINISHED';
@@ -453,8 +474,9 @@ export class GameEngine {
   sendToJail(player, reason) {
     player.inJail = true;
     player.jailTurns = 0;
-    player.position = 10; // Jail space
+    player.position = 10;
     this.addLog(`🔒 ${player.name} sent to Jail! Reason: ${reason}.`);
+    if (this.onStateChange) this.onStateChange();
   }
 
   payJailFine(player) {
@@ -505,7 +527,6 @@ export class GameEngine {
 
   payPlayer(sender, receiver, amount, reason) {
     if (sender.money < amount) {
-      // Automatic bankruptcy check or payment of remaining cash
       const paid = Math.max(0, sender.money);
       sender.money -= amount;
       receiver.money += paid;
@@ -523,7 +544,6 @@ export class GameEngine {
       player.bankrupt = true;
       this.addLog(`💥 ${player.name} went bankrupt and is eliminated from the game!`);
       
-      // Relinquish properties to Bank
       Object.keys(this.boardState).forEach(id => {
         if (this.boardState[id].ownerId === player.id) {
           this.boardState[id].ownerId = null;
@@ -533,7 +553,6 @@ export class GameEngine {
         }
       });
 
-      // Check win condition
       const activePlayers = this.players.filter(p => !p.bankrupt);
       if (activePlayers.length === 1) {
         this.status = 'FINISHED';
@@ -545,7 +564,7 @@ export class GameEngine {
   drawCard(player, deckType) {
     const deck = deckType === 'CHANCE' ? this.chanceDeck : this.communityDeck;
     const card = deck.shift();
-    deck.push(card); // Recycle card
+    deck.push(card);
 
     this.addLog(`🎴 ${player.name} drew ${deckType} Card: "${card.text}"`);
 
@@ -559,58 +578,23 @@ export class GameEngine {
       case 'MOVE_RELATIVE':
         this.movePlayer(player, card.amount);
         break;
-      case 'GO_TO_JAIL':
-        this.sendToJail(player, 'Chance/Chest Card');
+      case 'JAIL':
+        this.sendToJail(player, card.text);
         break;
-      case 'JAIL_CARD':
+      case 'JAIL_FREE':
         player.jailCards = (player.jailCards || 0) + 1;
         break;
-      case 'COLLECT_ALL':
-        this.players.filter(p => p.id !== player.id && !p.bankrupt).forEach(p => {
-          this.payPlayer(p, player, card.amount, 'Card Gift');
-        });
-        break;
-      case 'PAY_ALL':
-        this.players.filter(p => p.id !== player.id && !p.bankrupt).forEach(p => {
-          this.payPlayer(player, p, card.amount, 'Card Fee');
-        });
-        break;
     }
-  }
-
-  handleAITurn() {
-    const player = this.getCurrentPlayer();
-    if (!player || !player.isAI || player.bankrupt || this.status !== 'PLAYING') return;
-
-    // Ensure AI turn can roll
-    this.hasRolled = false;
-    const roll = this.rollDice();
-
-    if (this.onStateChange) this.onStateChange();
-
-    // AI Decision: Buy Property if landing on unowned tile
-    const currentTile = BOARD_TILES[player.position];
-    const tileState = this.boardState[currentTile.id];
-    if (tileState && !tileState.ownerId && currentTile.price > 0 && player.money >= currentTile.price + 100) {
-      this.buyProperty(player, currentTile.id);
-      if (this.onStateChange) this.onStateChange();
-    }
-
-    if (roll && roll.isDouble && !player.inJail && !player.bankrupt && this.doublesCount < 3) {
-      // AI rolls again on doubles after a short delay
-      setTimeout(() => this.handleAITurn(), 1500);
-    } else {
-      // AI ends turn
-      setTimeout(() => {
-        this.nextTurn();
-        if (this.onStateChange) this.onStateChange();
-      }, 1500);
-    }
+    this.checkBankruptcy(player);
   }
 
   addLog(msg) {
-    const logItem = { time: new Date().toLocaleTimeString(), message: msg };
-    this.logs.unshift(logItem);
-    if (this.logs.length > 80) this.logs.pop();
+    const logEntry = {
+      id: Date.now() + Math.random(),
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      msg
+    };
+    this.logs.unshift(logEntry);
+    if (this.logs.length > 50) this.logs.pop();
   }
 }
