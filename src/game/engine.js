@@ -203,6 +203,36 @@ export class GameEngine {
     this.saveToStorage();
   }
 
+  handleAITurn() {
+    const player = this.getCurrentPlayer();
+    if (!player || !player.isAI || player.bankrupt || this.status !== 'PLAYING') return;
+
+    // Roll dice
+    const roll = this.rollDice();
+    if (!roll) return;
+
+    // Buy property if it's affordable and unowned
+    const tile = BOARD_TILES[player.position];
+    const tileState = this.boardState[player.position];
+    if (!player.inJail && tile && tile.price > 0 && tileState && !tileState.ownerId && player.money >= tile.price) {
+      this.buyProperty(player, player.position);
+    }
+
+    if (this.onStateChange) this.onStateChange();
+
+    // Rolled doubles and can roll again (hasRolled=false means doubles, not jailed)
+    if (roll.isDouble && !this.hasRolled) {
+      setTimeout(() => this.handleAITurn(), 1800);
+      return;
+    }
+
+    // End AI turn
+    setTimeout(() => {
+      this.nextTurn();
+      if (this.onStateChange) this.onStateChange();
+    }, 1000);
+  }
+
   rollDice() {
     const player = this.getCurrentPlayer();
     if (!player || player.bankrupt) return null;

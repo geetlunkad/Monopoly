@@ -286,13 +286,21 @@ class MonopolyApp {
 
     // ── GAME CONTROLS ─────────────────────────────────────────────────────
     document.addEventListener('click', (e) => {
-      if (e.target?.id === 'btnRollDice' || e.target?.closest('#btnRollDice')) {
+        if (e.target?.id === 'btnRollDice' || e.target?.closest('#btnRollDice')) {
         if (this.engine.status !== 'PLAYING') {
           alert('⚠️ GE must click "🚀 START GAME" first.');
           return;
         }
         const activePlayer = this.engine.getCurrentPlayer();
         if (!activePlayer || activePlayer.bankrupt) return;
+
+        // Only the active player's browser can roll
+        const cu = globalAuthStore.getCurrentUser();
+        const isMyTurn = cu && (
+          activePlayer.id === cu.id ||
+          activePlayer.name.toLowerCase() === cu.username.toLowerCase()
+        );
+        if (!isMyTurn || activePlayer.isAI) return;
 
         if (activePlayer.inJail && !this.engine.hasRolled) {
           this.modalUI.showJailOptionsModal(
@@ -317,6 +325,17 @@ class MonopolyApp {
     document.addEventListener('click', (e) => {
       if (e.target?.id === 'btnEndTurn' || e.target?.closest('#btnEndTurn')) {
         if (this.engine.status !== 'PLAYING') return;
+
+        // Only the active player can end their turn
+        const endActivePlayer = this.engine.getCurrentPlayer();
+        const endUser = globalAuthStore.getCurrentUser();
+        const isEndMyTurn = endUser && endActivePlayer && (
+          endActivePlayer.id === endUser.id ||
+          endActivePlayer.name.toLowerCase() === endUser.username.toLowerCase()
+        );
+        if (!isEndMyTurn || endActivePlayer.isAI) return;
+        if (!this.engine.hasRolled) return; // Must roll before ending turn
+
         this.engine.nextTurn();
         this.mpManager.broadcastState();
         this.updateUI();
@@ -414,6 +433,15 @@ class MonopolyApp {
     if (this.engine.status !== 'PLAYING') return;
     const activePlayer = this.engine.getCurrentPlayer();
     if (!activePlayer || activePlayer.isAI) return;
+
+    // Only show the buy prompt on the active player's own screen
+    const currentUser = globalAuthStore.getCurrentUser();
+    const isMyTurn = currentUser && (
+      activePlayer.id === currentUser.id ||
+      activePlayer.name.toLowerCase() === currentUser.username.toLowerCase()
+    );
+    if (!isMyTurn) return;
+
     const tileId = activePlayer.position;
     const tileData = BOARD_TILES[tileId];
     const tileState = this.engine.boardState[tileId];
@@ -444,24 +472,43 @@ class MonopolyApp {
     const btnRoll = document.getElementById('btnRollDice');
     const btnEnd = document.getElementById('btnEndTurn');
 
+    // Helper: disable a button
+    const setBtn = (btn, enabled, label) => {
+      if (!btn) return;
+      btn.disabled = !enabled;
+      btn.style.opacity = enabled ? '1' : '0.38';
+      btn.style.cursor = enabled ? 'pointer' : 'not-allowed';
+      if (label) btn.innerText = label;
+    };
+
     if (this.engine.status !== 'PLAYING') {
-      if (btnRoll) { btnRoll.disabled = true; btnRoll.style.opacity = '0.5'; btnRoll.style.cursor = 'not-allowed'; btnRoll.innerText = '⏳ Waiting for GE to Start'; }
-      if (btnEnd)  { btnEnd.disabled = true;  btnEnd.style.opacity = '0.5';  btnEnd.style.cursor = 'not-allowed'; }
+      setBtn(btnRoll, false, '⏳ Waiting for GE to Start');
+      setBtn(btnEnd, false);
       return;
     }
 
+    // Is the logged-in user the current active player?
+    const myTurn = currentUser && activePlayer && (
+      activePlayer.id === currentUser.id ||
+      activePlayer.name.toLowerCase() === currentUser.username.toLowerCase()
+    );
+
     if (activePlayer?.isAI) {
-      if (btnRoll) { btnRoll.disabled = true; btnRoll.style.opacity = '0.5'; btnRoll.style.cursor = 'not-allowed'; btnRoll.innerText = '🤖 AI Playing…'; }
-      if (btnEnd)  { btnEnd.disabled = true;  btnEnd.style.opacity = '0.5';  btnEnd.style.cursor = 'not-allowed'; }
+      // AI is playing — nobody interacts
+      setBtn(btnRoll, false, `🤖 ${activePlayer.name} is playing…`);
+      setBtn(btnEnd, false);
+    } else if (!myTurn) {
+      // Another human player's turn — show who's playing, disable everything
+      setBtn(btnRoll, false, `⏳ ${activePlayer?.name || '?'}'s turn…`);
+      setBtn(btnEnd, false);
+    } else if (!this.engine.hasRolled) {
+      // MY turn, haven't rolled yet — enable Roll, lock End Turn
+      setBtn(btnRoll, true, '🎲 Roll Dice');
+      setBtn(btnEnd, false);
     } else {
-      if (btnEnd) { btnEnd.disabled = false; btnEnd.style.opacity = '1'; btnEnd.style.cursor = 'pointer'; }
-      if (btnRoll) {
-        if (this.engine.hasRolled) {
-          btnRoll.disabled = true; btnRoll.style.opacity = '0.5'; btnRoll.style.cursor = 'not-allowed'; btnRoll.innerText = '🎲 Rolled (End Turn)';
-        } else {
-          btnRoll.disabled = false; btnRoll.style.opacity = '1'; btnRoll.style.cursor = 'pointer'; btnRoll.innerText = '🎲 Roll Dice';
-        }
-      }
+      // MY turn, already rolled — lock Roll, enable End Turn
+      setBtn(btnRoll, false, '🎲 Already Rolled');
+      setBtn(btnEnd, true);
     }
   }
 }
