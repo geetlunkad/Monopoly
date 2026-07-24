@@ -55,26 +55,24 @@ class MonopolyApp {
       if (user.username === 'GE') {
         const roomCode = this.mpManager.createLobby(user);
         if (this.engine.players.length === 1) {
-          this.engine.addPlayer('bot_1', 'CyberBot 1', '#10b981', true);
-          this.engine.addPlayer('bot_2', 'CyberBot 2', '#ef4444', true);
+          this.engine.addPlayer({ id: 'bot_1', name: 'CyberBot 1', isAI: true, color: '#10b981' });
+          this.engine.addPlayer({ id: 'bot_2', name: 'CyberBot 2', isAI: true, color: '#ef4444' });
           this.mpManager.broadcastState();
         }
       } else {
-        const targetRoom = 'MONO-GE';
-        const el = document.getElementById('inviteCodeText');
-        if (el) el.innerText = targetRoom;
-        
-        let player = this.engine.players.find(p => p.name === user.username);
-        if (!player) {
-          this.engine.addPlayer(user.id || 'usr_' + Date.now(), user.username, '#f59e0b', false);
-        }
-
-        this.mpManager.joinLobby(targetRoom, user, (joined) => {
-          console.log('Join lobby result:', joined);
+        this.mpManager.joinLobby('MONO-GE', user, (joined) => {
+          console.log('Player join synced:', user.username);
         });
       }
+
+      // Progress Restoration Check: If game is in progress, jump directly to active board!
+      if (this.engine.status === 'PLAYING') {
+        this.showScreen('GAME');
+      } else {
+        this.showScreen('LOBBY');
+      }
     } catch (err) {
-      console.warn('Lobby setup warning:', err);
+      console.warn('Lobby setup error:', err);
     }
 
     this.updateLobbyUI(user);

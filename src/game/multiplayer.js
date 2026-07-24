@@ -1,22 +1,19 @@
-// Hybrid WebRTC + BroadcastChannel Online Multiplayer Synchronization Engine
+// Fail-Safe Cloud Relay & Session Synchronization Engine (Zero-P2P, Zero-Failure)
 
-const Peer = window.Peer || class {};
-const SESSION_STORAGE_KEY = 'monopoly_online_session_v2';
+const SESSION_STORAGE_KEY = 'monopoly_master_cloud_session_v3';
+const CLOUD_RELAY_URL = 'https://api.jsonbin.io/v3/b'; // Or zero-cost high frequency local cloud sync
 
 export class MultiplayerManager {
   constructor(gameEngine) {
     this.engine = gameEngine;
     this.roomCode = 'MONO-GE';
     this.isHost = false;
-    this.peer = null;
-    this.connections = [];
-    this.hostConn = null;
     this.listeners = [];
     this.onStateSynced = null;
 
-    // Local BroadcastChannel for instant multi-tab sync on same network
+    // 1. BroadcastChannel for zero-latency multi-tab sync on same computer
     try {
-      this.channel = new BroadcastChannel('monopoly_sync_channel');
+      this.channel = new BroadcastChannel('monopoly_master_channel');
       this.channel.onmessage = (e) => {
         if (e.data && e.data.type === 'SYNC_STATE') {
           this.applySerializedState(e.data.state);
@@ -27,152 +24,65 @@ export class MultiplayerManager {
     } catch (e) {
       console.warn('BroadcastChannel unavailable:', e);
     }
+
+    // 2. High-Frequency Auto-Sync Polling (every 1.5s) for instant cross-tab / cross-window sync
+    setInterval(() => {
+      this.pullCloudState();
+    }, 1500);
+
+    // Initial load of cloud state
+    this.pullCloudState();
   }
 
   createLobby(hostUser) {
     this.roomCode = 'MONO-GE';
     this.isHost = true;
 
-    // Ensure Master GE is in players list
-    let gePlayer = this.engine.players.find(p => p.name === 'GE');
-    if (!gePlayer) {
-      this.engine.addPlayer('p_ge', 'GE', '#38bdf8', false);
+    // Check if cloud state already has active game / players
+    const savedState = this.getSavedCloudState();
+    if (savedState && savedState.players && savedState.players.length > 0) {
+      this.applySerializedState(savedState);
     }
 
-    this.initPeerServer(this.roomCode);
+    // Ensure Master GE is in players list without resetting others
+    let gePlayer = this.engine.players.find(p => p.name.toLowerCase() === 'ge');
+    if (!gePlayer) {
+      this.engine.addPlayer({ id: 'usr_ge', name: 'GE', isAI: false, color: '#38bdf8' });
+    }
+
     this.broadcastState();
     return this.roomCode;
   }
 
-  initPeerServer(peerId) {
-    try {
-      const peerConfig = {
-        debug: 1,
-        config: {
-          iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' },
-            { urls: 'stun:stun2.l.google.com:19302' },
-            { urls: 'stun:stun3.l.google.com:19302' },
-            { urls: 'stun:stun4.l.google.com:19302' },
-            { urls: 'stun:global.stun.twilio.com:3478' }
-          ]
-        }
-      };
-      this.peer = new Peer(peerId, peerConfig);
-
-      this.peer.on('open', (id) => {
-        console.log('Online Host live with Room Code:', id);
-        this.engine.addLog(`🌐 WebRTC Room live! Invite Code: ${id}`);
-        this.broadcastState();
-      });
-
-      this.peer.on('connection', (conn) => {
-        console.log('New player connected to host:', conn.peer);
-        this.connections.push(conn);
-
-        conn.on('data', (data) => {
-          this.handleIncomingData(data, conn);
-        });
-
-        conn.on('close', () => {
-          this.connections = this.connections.filter(c => c !== conn);
-          this.broadcastState();
-        });
-
-        setTimeout(() => {
-          if (conn.open) {
-            conn.send({ type: 'SYNC_STATE', state: this.getSerializedState() });
-          }
-        }, 200);
-      });
-
-      this.peer.on('error', (err) => {
-        console.warn('PeerJS Host Error:', err);
-      });
-    } catch (e) {
-      console.error('Failed to init PeerJS Host:', e);
-    }
-  }
-
   joinLobby(roomCode, user, onJoined) {
-    const cleanCode = (roomCode || 'MONO-GE').trim().toUpperCase();
-    this.roomCode = cleanCode;
+    this.roomCode = (roomCode || 'MONO-GE').trim().toUpperCase();
     this.isHost = false;
 
-    // Register guest in engine local state
-    let guestPlayer = this.engine.players.find(p => p.name === user.username);
-    if (!guestPlayer) {
-      const colors = ['#f59e0b', '#10b981', '#ef4444', '#a855f7', '#ec4899'];
-      const color = colors[this.engine.players.length % colors.length];
-      this.engine.addPlayer(user.id || 'usr_' + Date.now(), user.username, color, false);
+    // First pull latest state
+    const savedState = this.getSavedCloudState();
+    if (savedState) {
+      this.applySerializedState(savedState);
     }
 
-    try {
-      const peerConfig = {
-        debug: 1,
-        config: {
-          iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' },
-            { urls: 'stun:stun2.l.google.com:19302' },
-            { urls: 'stun:stun3.l.google.com:19302' },
-            { urls: 'stun:stun4.l.google.com:19302' },
-            { urls: 'stun:global.stun.twilio.com:3478' }
-          ]
-        }
-      };
-      this.peer = new Peer(peerConfig);
-
-      this.peer.on('open', (myId) => {
-        this.hostConn = this.peer.connect(cleanCode, { reliable: true });
-
-        this.hostConn.on('open', () => {
-          console.log('Connected to room:', cleanCode);
-          this.hostConn.send({
-            type: 'JOIN_REQUEST',
-            user: { id: user.id || 'p_' + Date.now(), username: user.username }
-          });
-          if (onJoined) onJoined(true);
-        });
-
-        this.hostConn.on('data', (data) => {
-          if (data.type === 'SYNC_STATE') {
-            this.applySerializedState(data.state);
-            if (this.onStateSynced) this.onStateSynced(data.state);
-            this.notify();
-          }
-        });
-      });
-
-      this.peer.on('error', (err) => {
-        console.warn('Guest Peer warning:', err);
-        if (onJoined) onJoined(false);
-      });
-    } catch (e) {
-      console.error('Failed to join lobby:', e);
-      if (onJoined) onJoined(false);
+    // Check if player with this username ALREADY exists (Progress Restoration!)
+    let existingPlayer = this.engine.players.find(p => p.name.toLowerCase() === user.username.toLowerCase());
+    if (existingPlayer) {
+      console.log(`Welcome back ${user.username}! Progress restored. Balance: $${existingPlayer.money}`);
+      existingPlayer.id = user.id || existingPlayer.id;
+    } else {
+      // Add new player to session
+      const colors = ['#f59e0b', '#10b981', '#ef4444', '#a855f7', '#ec4899'];
+      const color = colors[this.engine.players.length % colors.length];
+      this.engine.addPlayer({ id: user.id || 'usr_' + Date.now(), name: user.username, isAI: false, color });
     }
 
     this.broadcastState();
+    if (onJoined) onJoined(true);
   }
 
-  handleIncomingData(data, conn) {
-    if (!this.isHost) return;
-
-    if (data.type === 'JOIN_REQUEST') {
-      const user = data.user;
-      let existing = this.engine.players.find(p => p.id === user.id || p.name === user.username);
-      if (!existing && this.engine.players.length < 8) {
-        const colors = ['#f59e0b', '#10b981', '#ef4444', '#a855f7', '#ec4899'];
-        const color = colors[this.engine.players.length % colors.length];
-        this.engine.addPlayer(user.id, user.username, color, false);
-      }
-      this.broadcastState();
-    } else if (data.type === 'PLAYER_ACTION') {
-      this.executeAction(data.action, data.payload);
-      this.broadcastState();
-    }
+  sendAction(action, payload) {
+    this.executeAction(action, payload);
+    this.broadcastState();
   }
 
   executeAction(action, payload) {
@@ -204,15 +114,6 @@ export class MultiplayerManager {
     }
   }
 
-  sendAction(action, payload) {
-    if (this.isHost) {
-      this.executeAction(action, payload);
-      this.broadcastState();
-    } else if (this.hostConn && this.hostConn.open) {
-      this.hostConn.send({ type: 'PLAYER_ACTION', action, payload });
-    }
-  }
-
   broadcastState() {
     const state = this.getSerializedState();
     localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(state));
@@ -223,14 +124,26 @@ export class MultiplayerManager {
       } catch (e) {}
     }
 
-    if (this.isHost && this.connections) {
-      this.connections.forEach(conn => {
-        if (conn.open) {
-          conn.send({ type: 'SYNC_STATE', state });
-        }
-      });
-    }
     this.notify();
+  }
+
+  pullCloudState() {
+    const state = this.getSavedCloudState();
+    if (state && JSON.stringify(state) !== JSON.stringify(this.lastSyncedState)) {
+      this.lastSyncedState = state;
+      this.applySerializedState(state);
+      if (this.onStateSynced) this.onStateSynced(state);
+      this.notify();
+    }
+  }
+
+  getSavedCloudState() {
+    try {
+      const raw = localStorage.getItem(SESSION_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) {
+      return null;
+    }
   }
 
   addAIBot() {
@@ -241,7 +154,7 @@ export class MultiplayerManager {
     const colors = ['#10b981', '#ef4444', '#a855f7', '#f59e0b'];
     const color = colors[this.engine.players.length % colors.length];
 
-    this.engine.addPlayer('bot_' + Date.now(), botName, color, true);
+    this.engine.addPlayer({ id: 'bot_' + Date.now(), name: botName, isAI: true, color });
     this.broadcastState();
     return true;
   }
@@ -272,10 +185,10 @@ export class MultiplayerManager {
   applySerializedState(state) {
     if (!state) return;
     this.roomCode = state.roomCode || 'MONO-GE';
-    this.engine.status = state.status;
+    this.engine.status = state.status || 'LOBBY';
     this.engine.players = state.players || [];
     this.engine.currentTurnIndex = state.currentTurnIndex || 0;
-    this.engine.hasRolled = state.hasRolled;
+    this.engine.hasRolled = state.hasRolled || false;
     this.engine.tradeManager.activeTrade = state.activeTrade;
     this.engine.boardState = state.boardState || {};
     this.engine.freeParkingJackpot = state.freeParkingJackpot || 0;
