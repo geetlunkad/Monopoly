@@ -186,7 +186,21 @@ export class MultiplayerManager {
     if (!state) return;
     this.roomCode = state.roomCode || 'MONO-GE';
     this.engine.status = state.status || 'LOBBY';
-    this.engine.players = state.players || [];
+
+    // Case-insensitive deduplication of players array
+    if (state.players && Array.isArray(state.players)) {
+      const uniquePlayers = [];
+      const seenNames = new Set();
+      state.players.forEach(p => {
+        const key = String(p.name).trim().toLowerCase();
+        if (!seenNames.has(key)) {
+          seenNames.add(key);
+          uniquePlayers.push(p);
+        }
+      });
+      this.engine.players = uniquePlayers;
+    }
+
     this.engine.currentTurnIndex = state.currentTurnIndex || 0;
     this.engine.hasRolled = state.hasRolled || false;
     this.engine.tradeManager.activeTrade = state.activeTrade;

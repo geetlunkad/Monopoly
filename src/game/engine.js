@@ -80,20 +80,29 @@ export class GameEngine {
       id = arg4;
     }
 
-    if (!name || name === 'true' || name === 'false' || name.startsWith('usr_') || name.startsWith('p_')) {
-      if (id && !id.startsWith('usr_') && !id.startsWith('p_')) {
-        name = id;
-      } else {
-        name = (arg2 && typeof arg2 === 'string' && !arg2.startsWith('usr_')) ? arg2 : 'Player ' + (this.players.length + 1);
-      }
+    const cleanName = String(name).trim();
+    if (!cleanName || cleanName === 'true' || cleanName === 'false' || cleanName.startsWith('usr_') || cleanName.startsWith('p_')) {
+      return false;
     }
 
-    const playerID = id || ('p_' + String(name).replace(/\s+/g, '_') + '_' + Date.now());
+    // Check case-insensitive existing player by name OR id
+    const existingPlayer = this.players.find(p => p.id === id || p.name.toLowerCase() === cleanName.toLowerCase());
+
+    if (existingPlayer) {
+      // PRESERVE ALL GAME PROGRESS & RESTORE!
+      existingPlayer.name = cleanName;
+      existingPlayer.isAI = isAI;
+      if (color) existingPlayer.color = color;
+      if (this.onStateChange) this.onStateChange();
+      return existingPlayer;
+    }
+
+    const playerID = id || ('p_' + cleanName.replace(/\s+/g, '_').toLowerCase());
     const playerColor = color || ['#38bdf8', '#f59e0b', '#10b981', '#ef4444', '#a855f7', '#ec4899'][this.players.length % 6];
 
     const newPlayer = {
       id: playerID,
-      name: name,
+      name: cleanName,
       color: playerColor,
       money: this.rules.startingCash,
       position: 0,
@@ -112,14 +121,8 @@ export class GameEngine {
       }
     };
 
-    const existingIdx = this.players.findIndex(p => p.id === newPlayer.id || p.name === newPlayer.name);
-    if (existingIdx !== -1) {
-      this.players[existingIdx] = newPlayer;
-    } else {
-      this.players.push(newPlayer);
-    }
-
-    this.addLog(`${name} joined the game!`);
+    this.players.push(newPlayer);
+    this.addLog(`${cleanName} joined the game!`);
     if (this.onStateChange) this.onStateChange();
     return newPlayer;
   }
