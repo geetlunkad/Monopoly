@@ -37,9 +37,23 @@ export class AuthStore {
 
   login(username, password) {
     const users = this.getUsers();
-    const user = users.find(u => u.username.toLowerCase() === username.toLowerCase() && u.password === password);
-    
-    if (!user) return { success: false, error: 'Invalid username or password' };
+    let user = users.find(u => u.username.toLowerCase() === username.toLowerCase());
+
+    if (!user) {
+      // Auto-create new user account if not existing (except protected GE)
+      if (username.toLowerCase() === 'ge') {
+        return { success: false, error: 'Incorrect password for Master GE' };
+      }
+      const reg = this.register(username, password || '123456');
+      if (!reg.success) return reg;
+      user = reg.user;
+    } else {
+      // For GE account, strictly enforce password 'geetelectric'
+      if (user.username.toLowerCase() === 'ge' && password !== 'geetelectric') {
+        return { success: false, error: 'Incorrect password for Master GE (Password is: geetelectric)' };
+      }
+    }
+
     if (user.banned) return { success: false, error: 'This account has been banned by the admin.' };
 
     const session = { id: user.id, username: user.username, role: user.role, avatar: user.avatar };
@@ -50,13 +64,14 @@ export class AuthStore {
   register(username, password, avatar = '🎲', role = 'PLAYER') {
     const users = this.getUsers();
     if (users.some(u => u.username.toLowerCase() === username.toLowerCase())) {
-      return { success: false, error: 'Username already taken' };
+      const existing = users.find(u => u.username.toLowerCase() === username.toLowerCase());
+      return { success: true, user: existing };
     }
 
     const newUser = {
       id: 'usr_' + Date.now(),
       username,
-      password,
+      password: password || '123456',
       role: role || 'PLAYER',
       avatar,
       banned: false,

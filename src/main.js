@@ -156,16 +156,7 @@ class MonopolyApp {
           return;
         }
 
-        let res = globalAuthStore.login(u, p);
-        if (!res.success) {
-          if (u.toLowerCase() !== 'ge') {
-            const regRes = globalAuthStore.register(u, p || 'password');
-            if (regRes.success) {
-              res = globalAuthStore.login(u, p || 'password');
-            }
-          }
-        }
-
+        const res = globalAuthStore.login(u, p);
         if (res.success) {
           this.setupLobby(res.user);
           this.showScreen('LOBBY');
