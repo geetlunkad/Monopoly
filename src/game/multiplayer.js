@@ -1,5 +1,6 @@
-// Centralized Cloud Backend API Engine (100% Free, Zero-P2P, Zero-PeerJS)
+// True Cross-Device Cloud API Synchronization Engine (100% Free, Zero-P2P, Zero-PeerJS)
 
+const CLOUD_STREAM_URL = 'https://ntfy.sh/monopoly_ge_game_session_2026';
 const MASTER_ROOM_KEY = 'monopoly_central_server_state_v1';
 
 export class MultiplayerManager {
@@ -9,45 +10,96 @@ export class MultiplayerManager {
     this.isHost = false;
     this.listeners = [];
     this.onStateSynced = null;
-    this.syncInterval = null;
+    this.lastStateHash = '';
 
-    // Local BroadcastChannel for instant same-device multi-tab sync
+    // 1. Local BroadcastChannel for instant same-device multi-tab sync
     try {
       this.channel = new BroadcastChannel('monopoly_central_channel');
       this.channel.onmessage = (e) => {
         if (e.data && e.data.type === 'CENTRAL_STATE_SYNC') {
           this.applySerializedState(e.data.state);
-          if (this.onStateSynced) this.onStateSynced(e.data.state);
-          this.notify();
         }
       };
     } catch (e) {}
 
-    // Start Centralized Server Polling (every 1 second)
-    this.startCentralServerPolling();
+    // 2. Cross-Device Realtime Cloud Stream (Server-Sent Events)
+    this.initCloudSSEListener();
+
+    // 3. Fallback Cloud Polling (every 1.5s)
+    setInterval(() => {
+      this.fetchCloudState();
+    }, 1500);
   }
 
-  startCentralServerPolling() {
-    if (this.syncInterval) clearInterval(this.syncInterval);
-    this.syncInterval = setInterval(() => {
-      this.fetchCentralState();
-    }, 1000);
-    this.fetchCentralState();
-  }
-
-  async fetchCentralState() {
+  initCloudSSEListener() {
     try {
-      const raw = localStorage.getItem(MASTER_ROOM_KEY);
-      if (raw) {
-        const state = JSON.parse(raw);
-        if (state && JSON.stringify(state) !== JSON.stringify(this.lastSyncedState)) {
-          this.lastSyncedState = state;
-          this.applySerializedState(state);
-          if (this.onStateSynced) this.onStateSynced(state);
-          this.notify();
+      if (window.EventSource) {
+        this.sse = new EventSource(`${CLOUD_STREAM_URL}/sse`);
+        this.sse.onmessage = (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            if (data && data.message) {
+              const payload = JSON.parse(data.message);
+              this.handleIncomingCloudPayload(payload);
+            }
+          } catch (err) {}
+        };
+
+        this.sse.onerror = (err) => {
+          console.warn('Cloud SSE warning:', err);
+        };
+      }
+    } catch (e) {
+      console.warn('EventSource failed:', e);
+    }
+  }
+
+  async fetchCloudState() {
+    try {
+      const res = await fetch(`${CLOUD_STREAM_URL}/json?poll=1`);
+      if (res.ok) {
+        const text = await res.text();
+        const lines = text.trim().split('\n');
+        for (let i = lines.length - 1; i >= 0; i--) {
+          try {
+            const item = JSON.parse(lines[i]);
+            if (item && item.message) {
+              const payload = JSON.parse(item.message);
+              if (payload && payload.type === 'SYNC_STATE') {
+                this.handleIncomingCloudPayload(payload);
+                break;
+              }
+            }
+          } catch (err) {}
         }
       }
     } catch (e) {}
+  }
+
+  handleIncomingCloudPayload(payload) {
+    if (!payload) return;
+
+    if (payload.type === 'SYNC_STATE') {
+      const hash = JSON.stringify(payload.state);
+      if (hash !== this.lastStateHash) {
+        this.lastStateHash = hash;
+        this.applySerializedState(payload.state);
+        if (this.onStateSynced) this.onStateSynced(payload.state);
+        this.notify();
+      }
+    } else if (payload.type === 'JOIN_REQUEST' && this.isHost) {
+      const user = payload.user;
+      let existing = this.engine.players.find(p => p.name.toLowerCase() === user.username.toLowerCase());
+      if (!existing) {
+        const colors = ['#f59e0b', '#10b981', '#ef4444', '#a855f7', '#ec4899'];
+        const color = colors[this.engine.players.length % colors.length];
+        this.engine.addPlayer({ id: user.id || 'usr_' + Date.now(), name: user.username, isAI: false, color });
+      }
+      this.broadcastState();
+    } else if (payload.type === 'PLAYER_ACTION' && this.isHost) {
+      this.executeAction(payload.action, payload.payload);
+      this.broadcastState();
+    }
   }
 
   createLobby(hostUser) {
@@ -63,7 +115,13 @@ export class MultiplayerManager {
     this.roomCode = (roomCode || 'MONO-GE').trim().toUpperCase();
     this.isHost = false;
 
-    // Check if player username already exists in central server state
+    // Send Join Request to Cloud Stream
+    this.postToCloud({
+      type: 'JOIN_REQUEST',
+      user: { id: user.id || 'usr_' + Date.now(), username: user.username }
+    });
+
+    // Also register locally for instant feedback
     let existingPlayer = this.engine.players.find(p => p.name.toLowerCase() === user.username.toLowerCase());
     if (existingPlayer) {
       existingPlayer.id = user.id || existingPlayer.id;
@@ -77,8 +135,12 @@ export class MultiplayerManager {
   }
 
   sendAction(action, payload) {
-    this.executeAction(action, payload);
-    this.broadcastState();
+    if (this.isHost) {
+      this.executeAction(action, payload);
+      this.broadcastState();
+    } else {
+      this.postToCloud({ type: 'PLAYER_ACTION', action, payload });
+    }
   }
 
   executeAction(action, payload) {
@@ -120,7 +182,20 @@ export class MultiplayerManager {
       } catch (e) {}
     }
 
+    this.postToCloud({ type: 'SYNC_STATE', state });
     this.notify();
+  }
+
+  async postToCloud(payload) {
+    try {
+      await fetch(CLOUD_STREAM_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+    } catch (e) {
+      console.warn('Failed to post to cloud stream:', e);
+    }
   }
 
   addAIBot() {
