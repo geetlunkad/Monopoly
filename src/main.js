@@ -225,6 +225,25 @@ class MonopolyApp {
       };
     }
 
+    const btnResetSession = document.getElementById('btnResetSession');
+    if (btnResetSession) {
+      btnResetSession.onclick = () => {
+        if (confirm('🧹 Are you sure you want to reset the current game session and start fresh?')) {
+          this.engine.reset(true);
+          const currentUser = globalAuthStore.getCurrentUser();
+          if (currentUser) {
+            this.engine.addPlayer({ id: currentUser.id, name: currentUser.username, isAI: false, color: '#38bdf8' });
+          }
+          this.engine.addPlayer({ id: 'bot_1', name: 'CyberBot 1', isAI: true, color: '#10b981' });
+          this.engine.addPlayer({ id: 'bot_2', name: 'CyberBot 2', isAI: true, color: '#ef4444' });
+          this.mpManager.broadcastState();
+          this.showScreen('LOBBY');
+          this.updateLobbyUI(currentUser);
+          alert('✨ Session reset successfully!');
+        }
+      };
+    }
+
     const btnStartLaunch = document.getElementById('btnStartGameLaunch');
     if (btnStartLaunch) {
       btnStartLaunch.onclick = () => {

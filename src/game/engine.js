@@ -1,4 +1,4 @@
-// Core Monopoly Game Engine & Rules Evaluator
+// Core Monopoly Game Engine with Authoritative Map-Based Player Store & Reload Persistence
 
 import { BOARD_TILES, PROPERTY_GROUPS } from './boardData.js';
 import { CHANCE_CARDS, COMMUNITY_CHEST_CARDS } from './cardsData.js';
@@ -6,15 +6,38 @@ import { globalLuckEngine } from './luckEngine.js';
 import { AuctionManager } from './auctionManager.js';
 import { TradeManager } from './tradeManager.js';
 
+const STORAGE_KEY = 'monopoly_authoritative_session_v4';
+
 export class GameEngine {
   constructor() {
-    this.reset();
+    this.playersMap = {}; // Keyed by lowercase username (e.g., 'ge': { name: 'GE', ... })
+    this.reset(false);
+    this.loadFromStorage();
   }
 
-  reset() {
+  get players() {
+    return Object.values(this.playersMap);
+  }
+
+  set players(val) {
+    if (Array.isArray(val)) {
+      this.playersMap = {};
+      val.forEach(p => {
+        if (p && p.name) {
+          const key = String(p.name).trim().toLowerCase();
+          this.playersMap[key] = p;
+        }
+      });
+    }
+  }
+
+  reset(clearStorage = true) {
+    if (clearStorage) {
+      localStorage.removeItem(STORAGE_KEY);
+    }
     this.gameId = 'game_' + Math.random().toString(36).substring(2, 8);
     this.status = 'LOBBY'; // LOBBY, PLAYING, PAUSED, FINISHED
-    this.players = [];
+    this.playersMap = {};
     this.currentTurnIndex = 0;
     this.doublesCount = 0;
     this.hasRolled = false;
@@ -25,7 +48,6 @@ export class GameEngine {
     this.auctionManager = new AuctionManager();
     this.tradeManager = new TradeManager();
 
-    // Default Configurable House Rules
     this.rules = {
       startingCash: 1500,
       salaryPassGo: 200,
@@ -59,8 +81,6 @@ export class GameEngine {
   }
 
   addPlayer(arg1, arg2 = false, arg3 = null, arg4 = null) {
-    if (this.players.length >= 8) return false;
-
     let id, name, isAI, color;
 
     if (typeof arg1 === 'object' && arg1 !== null) {
@@ -80,25 +100,29 @@ export class GameEngine {
       id = arg4;
     }
 
-    const cleanName = String(name).trim();
+    const cleanName = String(name || '').trim();
     if (!cleanName || cleanName === 'true' || cleanName === 'false' || cleanName.startsWith('usr_') || cleanName.startsWith('p_')) {
       return false;
     }
 
-    // Check case-insensitive existing player by name OR id
-    const existingPlayer = this.players.find(p => p.id === id || p.name.toLowerCase() === cleanName.toLowerCase());
+    const key = cleanName.toLowerCase();
 
-    if (existingPlayer) {
-      // PRESERVE ALL GAME PROGRESS & RESTORE!
-      existingPlayer.name = cleanName;
-      existingPlayer.isAI = isAI;
-      if (color) existingPlayer.color = color;
+    // Check if player ALREADY exists in playersMap
+    if (this.playersMap[key]) {
+      // PRESERVE ALL GAME PROGRESS (cash, position, properties, jail status)!
+      const existing = this.playersMap[key];
+      existing.name = cleanName;
+      existing.isAI = !!isAI;
+      if (color) existing.color = color;
+      this.saveToStorage();
       if (this.onStateChange) this.onStateChange();
-      return existingPlayer;
+      return existing;
     }
 
-    const playerID = id || ('p_' + cleanName.replace(/\s+/g, '_').toLowerCase());
-    const playerColor = color || ['#38bdf8', '#f59e0b', '#10b981', '#ef4444', '#a855f7', '#ec4899'][this.players.length % 6];
+    if (Object.keys(this.playersMap).length >= 8) return false;
+
+    const playerID = id || ('usr_' + key);
+    const playerColor = color || ['#38bdf8', '#f59e0b', '#10b981', '#ef4444', '#a855f7', '#ec4899'][Object.keys(this.playersMap).length % 6];
 
     const newPlayer = {
       id: playerID,
@@ -110,7 +134,7 @@ export class GameEngine {
       jailTurns: 0,
       jailCards: 0,
       bankrupt: false,
-      isAI: isAI,
+      isAI: !!isAI,
       stats: {
         turnsPlayed: 0,
         propertiesOwned: 0,
@@ -121,21 +145,24 @@ export class GameEngine {
       }
     };
 
-    this.players.push(newPlayer);
+    this.playersMap[key] = newPlayer;
     this.addLog(`${cleanName} joined the game!`);
+    this.saveToStorage();
     if (this.onStateChange) this.onStateChange();
     return newPlayer;
   }
 
   removePlayer(playerIdOrName) {
-    const player = this.players.find(p => p.id === playerIdOrName || p.name === playerIdOrName);
-    if (!player || player.name === 'GE') return false;
+    const key = String(playerIdOrName).trim().toLowerCase();
+    const player = Object.values(this.playersMap).find(p => p.id === playerIdOrName || p.name.toLowerCase() === key);
+    if (!player || player.name.toLowerCase() === 'ge') return false;
 
-    this.players = this.players.filter(p => p.id !== player.id);
+    delete this.playersMap[player.name.toLowerCase()];
     if (this.currentTurnIndex >= this.players.length) {
       this.currentTurnIndex = 0;
     }
     this.addLog(`🤖 ${player.name} was removed from the game.`);
+    this.saveToStorage();
     if (this.onStateChange) this.onStateChange();
     return true;
   }
@@ -146,6 +173,7 @@ export class GameEngine {
     this.currentTurnIndex = 0;
     this.hasRolled = false;
     this.addLog(`🎲 Game started! ${this.getCurrentPlayer() ? this.getCurrentPlayer().name : 'Player'}'s turn.`);
+    this.saveToStorage();
     if (this.onStateChange) this.onStateChange();
     return true;
   }
@@ -161,7 +189,6 @@ export class GameEngine {
     this.hasRolled = false;
     let nextIndex = (this.currentTurnIndex + 1) % this.players.length;
 
-    // Skip bankrupt players
     let count = 0;
     while (this.players[nextIndex] && this.players[nextIndex].bankrupt && count < this.players.length) {
       nextIndex = (nextIndex + 1) % this.players.length;
@@ -178,6 +205,7 @@ export class GameEngine {
         setTimeout(() => this.handleAITurn(), 1200);
       }
     }
+    this.saveToStorage();
   }
 
   rollDice() {
@@ -200,6 +228,7 @@ export class GameEngine {
       if (this.doublesCount >= this.rules.maxDoublesToJail) {
         this.sendToJail(player, 'Rolled 3 doubles in a row');
         this.hasRolled = true;
+        this.saveToStorage();
         return roll;
       }
       this.hasRolled = false;
@@ -213,6 +242,7 @@ export class GameEngine {
       this.movePlayer(player, roll.sum);
     }
 
+    this.saveToStorage();
     return roll;
   }
 
@@ -235,6 +265,7 @@ export class GameEngine {
     this.addLog(`📍 ${player.name} landed on ${tile.name}.`);
 
     this.handleTileLanding(player, tile);
+    this.saveToStorage();
   }
 
   handleTileLanding(player, tile) {
@@ -312,6 +343,7 @@ export class GameEngine {
     state.ownerId = player.id;
     player.stats.propertiesOwned++;
     this.addLog(`🔑 ${player.name} bought ${tile.name} for $${tile.price}.`);
+    this.saveToStorage();
     if (this.onStateChange) this.onStateChange();
     return true;
   }
@@ -358,6 +390,7 @@ export class GameEngine {
       player.money -= tile.houseCost;
       player.stats.housesBuilt++;
       this.addLog(`🏗️ ${player.name} built house #${state.houses} on ${tile.name}.`);
+      this.saveToStorage();
       if (this.onStateChange) this.onStateChange();
       return true;
     } else if (currentLevel === 4) {
@@ -366,6 +399,7 @@ export class GameEngine {
       player.money -= tile.houseCost;
       player.stats.hotelsBuilt++;
       this.addLog(`🏨 ${player.name} upgraded to a HOTEL on ${tile.name}!`);
+      this.saveToStorage();
       if (this.onStateChange) this.onStateChange();
       return true;
     }
@@ -395,12 +429,14 @@ export class GameEngine {
       state.houses = 4;
       player.money += refund;
       this.addLog(`💵 ${player.name} sold HOTEL on ${tile.name} for $${refund} (degraded to 4 houses).`);
+      this.saveToStorage();
       if (this.onStateChange) this.onStateChange();
       return true;
     } else if (state.houses > 0) {
       state.houses--;
       player.money += refund;
       this.addLog(`💵 ${player.name} sold 1 house on ${tile.name} for $${refund}.`);
+      this.saveToStorage();
       if (this.onStateChange) this.onStateChange();
       return true;
     }
@@ -424,6 +460,7 @@ export class GameEngine {
     state.mortgaged = true;
     player.money += mortgageValue;
     this.addLog(`🏦 ${player.name} mortgaged ${tile.name} for +$${mortgageValue}.`);
+    this.saveToStorage();
     if (this.onStateChange) this.onStateChange();
     return true;
   }
@@ -440,6 +477,7 @@ export class GameEngine {
     player.money -= unmortgageCost;
     state.mortgaged = false;
     this.addLog(`🔓 ${player.name} unmortgaged ${tile.name} for $${unmortgageCost}.`);
+    this.saveToStorage();
     if (this.onStateChange) this.onStateChange();
     return true;
   }
@@ -470,6 +508,7 @@ export class GameEngine {
       this.nextTurn();
     }
 
+    this.saveToStorage();
     if (this.onStateChange) this.onStateChange();
     return true;
   }
@@ -479,6 +518,7 @@ export class GameEngine {
     player.jailTurns = 0;
     player.position = 10;
     this.addLog(`🔒 ${player.name} sent to Jail! Reason: ${reason}.`);
+    this.saveToStorage();
     if (this.onStateChange) this.onStateChange();
   }
 
@@ -493,6 +533,7 @@ export class GameEngine {
     }
     const roll = this.rollDice();
     this.hasRolled = true;
+    this.saveToStorage();
     return roll;
   }
 
@@ -504,6 +545,7 @@ export class GameEngine {
     this.addLog(`🎴 ${player.name} used a Get Out of Jail Free card!`);
     const roll = this.rollDice();
     this.hasRolled = true;
+    this.saveToStorage();
     return roll;
   }
 
@@ -526,6 +568,7 @@ export class GameEngine {
         this.movePlayer(player, roll.sum);
       }
     }
+    this.saveToStorage();
   }
 
   payPlayer(sender, receiver, amount, reason) {
@@ -540,6 +583,7 @@ export class GameEngine {
       receiver.money += amount;
       this.addLog(`💸 ${sender.name} paid $${amount} to ${receiver.name} for ${reason}.`);
     }
+    this.saveToStorage();
   }
 
   checkBankruptcy(player) {
@@ -562,6 +606,7 @@ export class GameEngine {
         this.addLog(`🏆 GAME OVER! ${activePlayers[0].name} IS THE WINNER!`);
       }
     }
+    this.saveToStorage();
   }
 
   drawCard(player, deckType) {
@@ -589,6 +634,7 @@ export class GameEngine {
         break;
     }
     this.checkBankruptcy(player);
+    this.saveToStorage();
   }
 
   addLog(msg) {
@@ -599,5 +645,39 @@ export class GameEngine {
     };
     this.logs.unshift(logEntry);
     if (this.logs.length > 50) this.logs.pop();
+  }
+
+  saveToStorage() {
+    try {
+      const state = {
+        status: this.status,
+        playersMap: this.playersMap,
+        currentTurnIndex: this.currentTurnIndex,
+        hasRolled: this.hasRolled,
+        boardState: this.boardState,
+        freeParkingJackpot: this.freeParkingJackpot,
+        rules: this.rules,
+        logs: this.logs
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch (e) {}
+  }
+
+  loadFromStorage() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      const state = JSON.parse(raw);
+      if (state && state.playersMap) {
+        this.status = state.status || 'LOBBY';
+        this.playersMap = state.playersMap || {};
+        this.currentTurnIndex = state.currentTurnIndex || 0;
+        this.hasRolled = !!state.hasRolled;
+        this.boardState = state.boardState || this.boardState;
+        this.freeParkingJackpot = state.freeParkingJackpot || 0;
+        this.rules = state.rules || this.rules;
+        this.logs = state.logs || [];
+      }
+    } catch (e) {}
   }
 }
