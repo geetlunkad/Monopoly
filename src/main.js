@@ -80,7 +80,7 @@ class MonopolyApp {
   }
 
   updateLobbyUI(currentUser) {
-    const isGE = currentUser && currentUser.username === 'GE';
+    const isGE = currentUser && (currentUser.username === 'GE' || currentUser.role === 'ADMIN');
     const geControls = document.getElementById('geMasterControls');
     const guestNotice = document.getElementById('guestWaitingNotice');
 
@@ -98,9 +98,21 @@ class MonopolyApp {
             <div style="width: 14px; height: 14px; border-radius: 50%; background: ${p.color}; border: 1px solid #fff;"></div>
             <span>${p.name} ${p.isAI ? '🤖 (Bot)' : ''} ${p.name === 'GE' ? '👑 (Master)' : ''}</span>
           </div>
-          <span style="font-size: 0.78rem; color: var(--text-muted);">$${p.money}</span>
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <span style="font-size: 0.78rem; color: var(--text-muted);">$${p.money}</span>
+            ${p.isAI && isGE ? `<button class="btn btn-danger btn-sm btn-remove-bot" data-id="${p.id}" style="padding: 2px 8px; font-size: 0.72rem;">✕ Remove</button>` : ''}
+          </div>
         `;
         rosterEl.appendChild(item);
+      });
+
+      // Bind remove bot buttons
+      rosterEl.querySelectorAll('.btn-remove-bot').forEach(btn => {
+        btn.onclick = () => {
+          const id = btn.dataset.id;
+          this.engine.removePlayer(id);
+          this.updateLobbyUI(currentUser);
+        };
       });
     }
   }

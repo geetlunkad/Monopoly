@@ -27,9 +27,19 @@ export class MultiplayerManager {
 
   initPeerServer(peerId) {
     try {
-      this.peer = new Peer(peerId, {
-        debug: 1
-      });
+      const peerConfig = {
+        debug: 1,
+        config: {
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' },
+            { urls: 'stun:stun3.l.google.com:19302' },
+            { urls: 'stun:stun4.l.google.com:19302' }
+          ]
+        }
+      };
+      this.peer = new Peer(peerId, peerConfig);
 
       this.peer.on('open', (id) => {
         console.log('PeerJS server initialized with Room Code:', id);
@@ -71,7 +81,19 @@ export class MultiplayerManager {
     this.isHost = false;
 
     try {
-      this.peer = new Peer();
+      const peerConfig = {
+        debug: 1,
+        config: {
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' },
+            { urls: 'stun:stun3.l.google.com:19302' },
+            { urls: 'stun:stun4.l.google.com:19302' }
+          ]
+        }
+      };
+      this.peer = new Peer(peerConfig);
       this.peer.on('open', (myId) => {
         console.log('Guest Peer initialized with ID:', myId);
         this.hostConn = this.peer.connect(cleanCode);

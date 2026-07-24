@@ -82,6 +82,19 @@ export class GameEngine {
     return newPlayer;
   }
 
+  removePlayer(playerIdOrName) {
+    const player = this.players.find(p => p.id === playerIdOrName || p.name === playerIdOrName);
+    if (!player || player.name === 'GE') return false;
+
+    this.players = this.players.filter(p => p.id !== player.id);
+    if (this.currentTurnIndex >= this.players.length) {
+      this.currentTurnIndex = 0;
+    }
+    this.addLog(`🤖 ${player.name} was removed from the game.`);
+    if (this.onStateChange) this.onStateChange();
+    return true;
+  }
+
   startGame() {
     if (this.players.length < 2) return false;
     this.status = 'PLAYING';
