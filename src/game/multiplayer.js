@@ -1,7 +1,7 @@
-// True Cross-Device Cloud API Synchronization Engine (100% Free, Zero-P2P, Zero-PeerJS)
+// Centralized Cloud Database Synchronization Engine (100% Free Central Cloud Server API)
 
-const CLOUD_STREAM_URL = 'https://ntfy.sh/monopoly_ge_game_session_2026';
-const MASTER_ROOM_KEY = 'monopoly_central_server_state_v1';
+const CENTRAL_CLOUD_DB_URL = 'https://api.restful-api.dev/objects/ff8081819f7e10ae019f92da7e851e0b';
+const LOCAL_CACHE_KEY = 'monopoly_central_server_state_v1';
 
 export class MultiplayerManager {
   constructor(gameEngine) {
@@ -11,117 +11,93 @@ export class MultiplayerManager {
     this.listeners = [];
     this.onStateSynced = null;
     this.lastStateHash = '';
+    this.isUpdatingCloud = false;
 
-    // 1. Local BroadcastChannel for instant same-device multi-tab sync
+    // 1. Multi-tab local channel for instant zero-latency same-device sync
     try {
       this.channel = new BroadcastChannel('monopoly_central_channel');
       this.channel.onmessage = (e) => {
         if (e.data && e.data.type === 'CENTRAL_STATE_SYNC') {
           this.applySerializedState(e.data.state);
+          if (this.onStateSynced) this.onStateSynced(e.data.state);
+          this.notify();
         }
       };
     } catch (e) {}
 
-    // 2. Cross-Device Realtime Cloud Stream (Server-Sent Events)
-    this.initCloudSSEListener();
-
-    // 3. Fallback Cloud Polling (every 1.5s)
+    // 2. High-Frequency Centralized Cloud Polling Loop (every 1.2s across all devices worldwide)
     setInterval(() => {
-      this.fetchCloudState();
-    }, 1500);
+      this.fetchCentralCloudState();
+    }, 1200);
+
+    // Initial fetch from Central Cloud Server
+    this.fetchCentralCloudState();
   }
 
-  initCloudSSEListener() {
+  async fetchCentralCloudState() {
+    if (this.isUpdatingCloud) return;
     try {
-      if (window.EventSource) {
-        this.sse = new EventSource(`${CLOUD_STREAM_URL}/sse`);
-        this.sse.onmessage = (e) => {
-          try {
-            const data = JSON.parse(e.data);
-            if (data && data.message) {
-              const payload = JSON.parse(data.message);
-              this.handleIncomingCloudPayload(payload);
-            }
-          } catch (err) {}
-        };
-
-        this.sse.onerror = (err) => {
-          console.warn('Cloud SSE warning:', err);
-        };
-      }
-    } catch (e) {
-      console.warn('EventSource failed:', e);
-    }
-  }
-
-  async fetchCloudState() {
-    try {
-      const res = await fetch(`${CLOUD_STREAM_URL}/json?poll=1`);
+      const res = await fetch(CENTRAL_CLOUD_DB_URL);
       if (res.ok) {
-        const text = await res.text();
-        const lines = text.trim().split('\n');
-        for (let i = lines.length - 1; i >= 0; i--) {
-          try {
-            const item = JSON.parse(lines[i]);
-            if (item && item.message) {
-              const payload = JSON.parse(item.message);
-              if (payload && payload.type === 'SYNC_STATE') {
-                this.handleIncomingCloudPayload(payload);
-                break;
-              }
-            }
-          } catch (err) {}
+        const json = await res.json();
+        if (json && json.data) {
+          const cloudState = json.data;
+          const hash = JSON.stringify(cloudState);
+          if (hash !== this.lastStateHash) {
+            this.lastStateHash = hash;
+            this.applySerializedState(cloudState);
+            if (this.onStateSynced) this.onStateSynced(cloudState);
+            this.notify();
+          }
         }
       }
-    } catch (e) {}
-  }
-
-  handleIncomingCloudPayload(payload) {
-    if (!payload) return;
-
-    if (payload.type === 'SYNC_STATE') {
-      const hash = JSON.stringify(payload.state);
-      if (hash !== this.lastStateHash) {
-        this.lastStateHash = hash;
-        this.applySerializedState(payload.state);
-        if (this.onStateSynced) this.onStateSynced(payload.state);
-        this.notify();
-      }
-    } else if (payload.type === 'JOIN_REQUEST' && this.isHost) {
-      const user = payload.user;
-      let existing = this.engine.players.find(p => p.name.toLowerCase() === user.username.toLowerCase());
-      if (!existing) {
-        const colors = ['#f59e0b', '#10b981', '#ef4444', '#a855f7', '#ec4899'];
-        const color = colors[this.engine.players.length % colors.length];
-        this.engine.addPlayer({ id: user.id || 'usr_' + Date.now(), name: user.username, isAI: false, color });
-      }
-      this.broadcastState();
-    } else if (payload.type === 'PLAYER_ACTION' && this.isHost) {
-      this.executeAction(payload.action, payload.payload);
-      this.broadcastState();
+    } catch (e) {
+      console.warn('Central Cloud Server fetch warning:', e);
     }
   }
 
-  createLobby(hostUser) {
+  async pushCentralCloudState(state) {
+    this.isUpdatingCloud = true;
+    try {
+      const payload = {
+        name: 'MONOPOLY_GLOBAL_SESSION',
+        data: state
+      };
+      const res = await fetch(CENTRAL_CLOUD_DB_URL, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) {
+        this.lastStateHash = JSON.stringify(state);
+      }
+    } catch (e) {
+      console.warn('Central Cloud Server PUT warning:', e);
+    } finally {
+      this.isUpdatingCloud = false;
+    }
+  }
+
+  async createLobby(hostUser) {
     this.roomCode = 'MONO-GE';
     this.isHost = true;
 
+    await this.fetchCentralCloudState();
+
+    // Register Master GE in Central Cloud Store
     this.engine.addPlayer({ id: 'usr_ge', name: 'GE', isAI: false, color: '#38bdf8' });
     this.broadcastState();
     return this.roomCode;
   }
 
-  joinLobby(roomCode, user) {
+  async joinLobby(roomCode, user) {
     this.roomCode = (roomCode || 'MONO-GE').trim().toUpperCase();
     this.isHost = false;
 
-    // Send Join Request to Cloud Stream
-    this.postToCloud({
-      type: 'JOIN_REQUEST',
-      user: { id: user.id || 'usr_' + Date.now(), username: user.username }
-    });
+    // Fetch latest Central Cloud DB state before joining
+    await this.fetchCentralCloudState();
 
-    // Also register locally for instant feedback
+    // Register guest player in Central Cloud Store
     let existingPlayer = this.engine.players.find(p => p.name.toLowerCase() === user.username.toLowerCase());
     if (existingPlayer) {
       existingPlayer.id = user.id || existingPlayer.id;
@@ -135,12 +111,8 @@ export class MultiplayerManager {
   }
 
   sendAction(action, payload) {
-    if (this.isHost) {
-      this.executeAction(action, payload);
-      this.broadcastState();
-    } else {
-      this.postToCloud({ type: 'PLAYER_ACTION', action, payload });
-    }
+    this.executeAction(action, payload);
+    this.broadcastState();
   }
 
   executeAction(action, payload) {
@@ -174,7 +146,7 @@ export class MultiplayerManager {
 
   broadcastState() {
     const state = this.getSerializedState();
-    localStorage.setItem(MASTER_ROOM_KEY, JSON.stringify(state));
+    localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(state));
 
     if (this.channel) {
       try {
@@ -182,20 +154,8 @@ export class MultiplayerManager {
       } catch (e) {}
     }
 
-    this.postToCloud({ type: 'SYNC_STATE', state });
+    this.pushCentralCloudState(state);
     this.notify();
-  }
-
-  async postToCloud(payload) {
-    try {
-      await fetch(CLOUD_STREAM_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-    } catch (e) {
-      console.warn('Failed to post to cloud stream:', e);
-    }
   }
 
   addAIBot() {
@@ -243,10 +203,12 @@ export class MultiplayerManager {
       const uniquePlayers = [];
       const seenNames = new Set();
       state.players.forEach(p => {
-        const key = String(p.name).trim().toLowerCase();
-        if (!seenNames.has(key)) {
-          seenNames.add(key);
-          uniquePlayers.push(p);
+        if (p && p.name) {
+          const key = String(p.name).trim().toLowerCase();
+          if (!seenNames.has(key)) {
+            seenNames.add(key);
+            uniquePlayers.push(p);
+          }
         }
       });
       this.engine.players = uniquePlayers;
