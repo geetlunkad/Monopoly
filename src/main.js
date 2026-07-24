@@ -141,10 +141,10 @@ class MonopolyApp {
   }
 
   bindEvents() {
-    // 1. LOGIN SCREEN HANDLERS
-    const btnQuickGE = document.getElementById('btnQuickLoginGE');
-    if (btnQuickGE) {
-      btnQuickGE.onclick = () => {
+    // 1. LOGIN SCREEN HANDLERS (2 BUTTON DESIGN)
+    const btnGE = document.getElementById('btnLoginGE');
+    if (btnGE) {
+      btnGE.onclick = () => {
         const pass = prompt('🔑 Enter Master GE Password:');
         if (pass === null) return;
         const res = globalAuthStore.login('GE', pass);
@@ -157,17 +157,13 @@ class MonopolyApp {
       };
     }
 
-    const btnSubmit = document.getElementById('btnCustomLoginSubmit');
-    if (btnSubmit) {
-      btnSubmit.onclick = () => {
-        const u = document.getElementById('loginUsername').value.trim();
-        const p = document.getElementById('loginPassword').value.trim();
-        if (!u) {
-          alert('Please enter a username!');
-          return;
-        }
-
-        const res = globalAuthStore.login(u, p);
+    const btnPlayer = document.getElementById('btnLoginPlayer');
+    if (btnPlayer) {
+      btnPlayer.onclick = () => {
+        const username = prompt('👤 Enter Your Player Name:');
+        if (!username || !username.trim()) return;
+        const cleanName = username.trim();
+        const res = globalAuthStore.login(cleanName, '123456');
         if (res.success) {
           this.showScreen('LOBBY');
           this.setupLobby(res.user);
