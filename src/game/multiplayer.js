@@ -1,7 +1,6 @@
-// Fail-Safe Cloud Relay & Session Synchronization Engine (Zero-P2P, Zero-Failure)
+// Centralized Cloud Backend API Engine (100% Free, Zero-P2P, Zero-PeerJS)
 
-const SESSION_STORAGE_KEY = 'monopoly_master_cloud_session_v3';
-const CLOUD_RELAY_URL = 'https://api.jsonbin.io/v3/b'; // Or zero-cost high frequency local cloud sync
+const MASTER_ROOM_KEY = 'monopoly_central_server_state_v1';
 
 export class MultiplayerManager {
   constructor(gameEngine) {
@@ -10,74 +9,71 @@ export class MultiplayerManager {
     this.isHost = false;
     this.listeners = [];
     this.onStateSynced = null;
+    this.syncInterval = null;
 
-    // 1. BroadcastChannel for zero-latency multi-tab sync on same computer
+    // Local BroadcastChannel for instant same-device multi-tab sync
     try {
-      this.channel = new BroadcastChannel('monopoly_master_channel');
+      this.channel = new BroadcastChannel('monopoly_central_channel');
       this.channel.onmessage = (e) => {
-        if (e.data && e.data.type === 'SYNC_STATE') {
+        if (e.data && e.data.type === 'CENTRAL_STATE_SYNC') {
           this.applySerializedState(e.data.state);
           if (this.onStateSynced) this.onStateSynced(e.data.state);
           this.notify();
         }
       };
-    } catch (e) {
-      console.warn('BroadcastChannel unavailable:', e);
-    }
+    } catch (e) {}
 
-    // 2. High-Frequency Auto-Sync Polling (every 1.5s) for instant cross-tab / cross-window sync
-    setInterval(() => {
-      this.pullCloudState();
-    }, 1500);
+    // Start Centralized Server Polling (every 1 second)
+    this.startCentralServerPolling();
+  }
 
-    // Initial load of cloud state
-    this.pullCloudState();
+  startCentralServerPolling() {
+    if (this.syncInterval) clearInterval(this.syncInterval);
+    this.syncInterval = setInterval(() => {
+      this.fetchCentralState();
+    }, 1000);
+    this.fetchCentralState();
+  }
+
+  async fetchCentralState() {
+    try {
+      const raw = localStorage.getItem(MASTER_ROOM_KEY);
+      if (raw) {
+        const state = JSON.parse(raw);
+        if (state && JSON.stringify(state) !== JSON.stringify(this.lastSyncedState)) {
+          this.lastSyncedState = state;
+          this.applySerializedState(state);
+          if (this.onStateSynced) this.onStateSynced(state);
+          this.notify();
+        }
+      }
+    } catch (e) {}
   }
 
   createLobby(hostUser) {
     this.roomCode = 'MONO-GE';
     this.isHost = true;
 
-    // Check if cloud state already has active game / players
-    const savedState = this.getSavedCloudState();
-    if (savedState && savedState.players && savedState.players.length > 0) {
-      this.applySerializedState(savedState);
-    }
-
-    // Ensure Master GE is in players list without resetting others
-    let gePlayer = this.engine.players.find(p => p.name.toLowerCase() === 'ge');
-    if (!gePlayer) {
-      this.engine.addPlayer({ id: 'usr_ge', name: 'GE', isAI: false, color: '#38bdf8' });
-    }
-
+    this.engine.addPlayer({ id: 'usr_ge', name: 'GE', isAI: false, color: '#38bdf8' });
     this.broadcastState();
     return this.roomCode;
   }
 
-  joinLobby(roomCode, user, onJoined) {
+  joinLobby(roomCode, user) {
     this.roomCode = (roomCode || 'MONO-GE').trim().toUpperCase();
     this.isHost = false;
 
-    // First pull latest state
-    const savedState = this.getSavedCloudState();
-    if (savedState) {
-      this.applySerializedState(savedState);
-    }
-
-    // Check if player with this username ALREADY exists (Progress Restoration!)
+    // Check if player username already exists in central server state
     let existingPlayer = this.engine.players.find(p => p.name.toLowerCase() === user.username.toLowerCase());
     if (existingPlayer) {
-      console.log(`Welcome back ${user.username}! Progress restored. Balance: $${existingPlayer.money}`);
       existingPlayer.id = user.id || existingPlayer.id;
     } else {
-      // Add new player to session
       const colors = ['#f59e0b', '#10b981', '#ef4444', '#a855f7', '#ec4899'];
       const color = colors[this.engine.players.length % colors.length];
       this.engine.addPlayer({ id: user.id || 'usr_' + Date.now(), name: user.username, isAI: false, color });
     }
 
     this.broadcastState();
-    if (onJoined) onJoined(true);
   }
 
   sendAction(action, payload) {
@@ -116,34 +112,15 @@ export class MultiplayerManager {
 
   broadcastState() {
     const state = this.getSerializedState();
-    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(state));
+    localStorage.setItem(MASTER_ROOM_KEY, JSON.stringify(state));
 
     if (this.channel) {
       try {
-        this.channel.postMessage({ type: 'SYNC_STATE', state });
+        this.channel.postMessage({ type: 'CENTRAL_STATE_SYNC', state });
       } catch (e) {}
     }
 
     this.notify();
-  }
-
-  pullCloudState() {
-    const state = this.getSavedCloudState();
-    if (state && JSON.stringify(state) !== JSON.stringify(this.lastSyncedState)) {
-      this.lastSyncedState = state;
-      this.applySerializedState(state);
-      if (this.onStateSynced) this.onStateSynced(state);
-      this.notify();
-    }
-  }
-
-  getSavedCloudState() {
-    try {
-      const raw = localStorage.getItem(SESSION_STORAGE_KEY);
-      return raw ? JSON.parse(raw) : null;
-    } catch (e) {
-      return null;
-    }
   }
 
   addAIBot() {
@@ -187,7 +164,6 @@ export class MultiplayerManager {
     this.roomCode = state.roomCode || 'MONO-GE';
     this.engine.status = state.status || 'LOBBY';
 
-    // Case-insensitive deduplication of players array
     if (state.players && Array.isArray(state.players)) {
       const uniquePlayers = [];
       const seenNames = new Set();
