@@ -27,17 +27,20 @@ export class ModalUI {
     }
   }
 
-  showPropertyDeed(tileId, ownerName, onBuy, onBuild, onSell, canBuild, currentLevel) {
+  showPropertyDeed(tileId, ownerName, onBuy, onBuild, onSell, onMortgage, onUnmortgage, canBuild, currentLevel, isMortgaged) {
     const tile = BOARD_TILES[tileId];
     if (!tile) return;
 
     let buildLabel = '🏗️ Build House';
     if (currentLevel === 4) buildLabel = '🏨 Build Hotel';
 
+    const mortgageValue = Math.floor(tile.price * 0.5);
+    const unmortgageCost = Math.floor(tile.price * 0.55);
+
     const html = `
       <div class="deed-card">
         <div class="deed-header" style="background: ${tile.color || '#334155'};">
-          ${tile.name}
+          ${tile.name} ${isMortgaged ? '(MORTGAGED 🏦)' : ''}
         </div>
         <div class="deed-body">
           <div class="deed-row"><span>Purchase Price:</span> <strong>$${tile.price}</strong></div>
@@ -48,13 +51,16 @@ export class ModalUI {
           <div class="deed-row"><span>4 Houses Rent:</span> <strong>$${tile.rent ? tile.rent[4] : 0}</strong></div>
           <div class="deed-row"><span>HOTEL Rent:</span> <strong>$${tile.rent ? tile.rent[5] : 0}</strong></div>
           <div class="deed-row"><span>House/Hotel Cost:</span> <strong>$${tile.houseCost || 0}</strong></div>
+          <div class="deed-row"><span>Mortgage Value:</span> <strong>+$${mortgageValue}</strong></div>
           <div class="deed-row"><span>Current Owner:</span> <strong>${ownerName || 'Bank (Unowned)'}</strong></div>
         </div>
       </div>
       <div style="display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap;">
         ${!ownerName && onBuy ? `<button class="btn btn-success" id="modalBtnBuy" style="flex:1;">🛒 Buy ($${tile.price})</button>` : ''}
-        ${ownerName && onBuild ? `<button class="btn btn-primary" id="modalBtnBuild" ${!canBuild ? 'disabled style="opacity:0.5;"' : ''} style="flex:1;">${buildLabel} ($${tile.houseCost})</button>` : ''}
+        ${ownerName && onBuild && !isMortgaged ? `<button class="btn btn-primary" id="modalBtnBuild" ${!canBuild ? 'disabled style="opacity:0.5;"' : ''} style="flex:1;">${buildLabel} ($${tile.houseCost})</button>` : ''}
         ${ownerName && onSell && currentLevel > 0 ? `<button class="btn btn-danger" id="modalBtnSell" style="flex:1;">💵 Sell Building (+$${Math.floor(tile.houseCost * 0.5)})</button>` : ''}
+        ${ownerName && onMortgage && !isMortgaged && currentLevel === 0 ? `<button class="btn btn-warn" id="modalBtnMortgage" style="flex:1;">🏦 Mortgage (+$${mortgageValue})</button>` : ''}
+        ${ownerName && onUnmortgage && isMortgaged ? `<button class="btn btn-emerald" id="modalBtnUnmortgage" style="flex:1;">🔓 Unmortgage (-$${unmortgageCost})</button>` : ''}
         <button class="btn" id="modalBtnClose" style="flex:1;">Close</button>
       </div>
     `;
@@ -63,22 +69,19 @@ export class ModalUI {
 
     document.getElementById('modalBtnClose').onclick = () => this.hideModal();
     if (onBuy && document.getElementById('modalBtnBuy')) {
-      document.getElementById('modalBtnBuy').onclick = () => {
-        onBuy();
-        this.hideModal();
-      };
+      document.getElementById('modalBtnBuy').onclick = () => { onBuy(); this.hideModal(); };
     }
     if (onBuild && canBuild && document.getElementById('modalBtnBuild')) {
-      document.getElementById('modalBtnBuild').onclick = () => {
-        onBuild();
-        this.hideModal();
-      };
+      document.getElementById('modalBtnBuild').onclick = () => { onBuild(); this.hideModal(); };
     }
     if (onSell && document.getElementById('modalBtnSell')) {
-      document.getElementById('modalBtnSell').onclick = () => {
-        onSell();
-        this.hideModal();
-      };
+      document.getElementById('modalBtnSell').onclick = () => { onSell(); this.hideModal(); };
+    }
+    if (onMortgage && document.getElementById('modalBtnMortgage')) {
+      document.getElementById('modalBtnMortgage').onclick = () => { onMortgage(); this.hideModal(); };
+    }
+    if (onUnmortgage && document.getElementById('modalBtnUnmortgage')) {
+      document.getElementById('modalBtnUnmortgage').onclick = () => { onUnmortgage(); this.hideModal(); };
     }
   }
 

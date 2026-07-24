@@ -12,9 +12,10 @@ export class ControlsUI {
         <div class="glass-panel" style="padding: 16px;" id="turnCard">
           <div style="font-size: 0.8rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Current Turn</div>
           <div id="activePlayerName" style="font-size: 1.4rem; font-weight: 800; margin: 4px 0; color: var(--accent-neon-blue);">Loading...</div>
-          <div style="display: flex; gap: 8px; margin-top: 10px;" id="actionButtons">
+          <div style="display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap;" id="actionButtons">
             <button class="btn btn-success" id="btnEndTurn" style="flex: 1;">⏩ End Turn</button>
             <button class="btn btn-accent" id="btnOpenTrade">🤝 Trade</button>
+            <button class="btn btn-danger btn-sm" id="btnDeclareBankruptcy" style="padding: 6px 10px; font-size: 0.75rem;">💥 Bankrupt</button>
           </div>
         </div>
 

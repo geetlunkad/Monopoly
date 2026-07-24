@@ -329,6 +329,20 @@ class MonopolyApp {
       }
     });
 
+    // Declare Bankruptcy Button
+    document.addEventListener('click', (e) => {
+      if (e.target && (e.target.id === 'btnDeclareBankruptcy' || e.target.closest('#btnDeclareBankruptcy'))) {
+        if (this.engine.status !== 'PLAYING') return;
+        const activePlayer = this.engine.getCurrentPlayer();
+        if (!activePlayer || activePlayer.isAI) return;
+
+        if (confirm(`💥 ${activePlayer.name}, declare bankruptcy? Your properties will be sold to the bank at 50% market value and you will be eliminated.`)) {
+          this.engine.declareBankruptcy(activePlayer);
+          this.updateUI();
+        }
+      }
+    });
+
     // Toggle Admin Panel Modal
     const btnAdmin = document.getElementById('btnAdminPanel');
     const adminBackdrop = document.getElementById('adminModalBackdrop');
@@ -367,8 +381,10 @@ class MonopolyApp {
 
         const tileState = this.engine.boardState[tileId];
         const owner = this.engine.players.find(p => p.id === tileState.ownerId);
+        const activePlayer = this.engine.getCurrentPlayer();
         const canBuild = activePlayer ? this.engine.canBuildHouse(activePlayer, tileId) : false;
         const currentLevel = this.engine.getEffectiveBuildingLevel(tileId);
+        const isMortgaged = tileState ? tileState.mortgaged : false;
 
         this.modalUI.showPropertyDeed(
           tileId,
@@ -385,8 +401,17 @@ class MonopolyApp {
             this.engine.sellHouse(activePlayer, tileId);
             this.updateUI();
           } : null,
+          owner && activePlayer && owner.id === activePlayer.id && this.engine.status === 'PLAYING' ? () => {
+            this.engine.mortgageProperty(activePlayer, tileId);
+            this.updateUI();
+          } : null,
+          owner && activePlayer && owner.id === activePlayer.id && this.engine.status === 'PLAYING' ? () => {
+            this.engine.unmortgageProperty(activePlayer, tileId);
+            this.updateUI();
+          } : null,
           canBuild,
-          currentLevel
+          currentLevel,
+          isMortgaged
         );
       }
     });

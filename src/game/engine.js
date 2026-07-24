@@ -381,6 +381,75 @@ export class GameEngine {
     return false;
   }
 
+  mortgageProperty(player, tileId) {
+    const tile = BOARD_TILES[tileId];
+    const state = this.boardState[tileId];
+
+    if (!tile || state.ownerId !== player.id || state.mortgaged) return false;
+
+    // Cannot mortgage if property has buildings or group has buildings
+    if (tile.type === 'PROPERTY') {
+      const groupTiles = PROPERTY_GROUPS[tile.group];
+      const hasBuildings = groupTiles.some(id => this.getEffectiveBuildingLevel(id) > 0);
+      if (hasBuildings) return false;
+    }
+
+    const mortgageValue = Math.floor(tile.price * 0.5);
+    state.mortgaged = true;
+    player.money += mortgageValue;
+    this.addLog(`🏦 ${player.name} mortgaged ${tile.name} for +$${mortgageValue}.`);
+    if (this.onStateChange) this.onStateChange();
+    return true;
+  }
+
+  unmortgageProperty(player, tileId) {
+    const tile = BOARD_TILES[tileId];
+    const state = this.boardState[tileId];
+
+    if (!tile || state.ownerId !== player.id || !state.mortgaged) return false;
+
+    const unmortgageCost = Math.floor(tile.price * 0.55); // 50% principal + 10% interest
+    if (player.money < unmortgageCost) return false;
+
+    player.money -= unmortgageCost;
+    state.mortgaged = false;
+    this.addLog(`🔓 ${player.name} unmortgaged ${tile.name} for $${unmortgageCost}.`);
+    if (this.onStateChange) this.onStateChange();
+    return true;
+  }
+
+  declareBankruptcy(player) {
+    if (!player || player.bankrupt) return false;
+
+    this.addLog(`💥 ${player.name} declared voluntary BANKRUPTCY!`);
+
+    // Liquidate & relinquish properties back to Bank
+    Object.keys(this.boardState).forEach(tileId => {
+      const state = this.boardState[tileId];
+      if (state.ownerId === player.id) {
+        state.ownerId = null;
+        state.houses = 0;
+        state.hotel = false;
+        state.mortgaged = false;
+      }
+    });
+
+    player.money = 0;
+    player.bankrupt = true;
+
+    // Check winner
+    const activePlayers = this.players.filter(p => !p.bankrupt);
+    if (activePlayers.length === 1) {
+      this.status = 'FINISHED';
+      this.addLog(`🏆 GAME OVER! ${activePlayers[0].name} IS THE WINNER!`);
+    } else if (this.getCurrentPlayer() && this.getCurrentPlayer().id === player.id) {
+      this.nextTurn();
+    }
+
+    if (this.onStateChange) this.onStateChange();
+    return true;
+  }
+
   sendToJail(player, reason) {
     player.inJail = true;
     player.jailTurns = 0;
