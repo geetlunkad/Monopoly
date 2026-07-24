@@ -111,11 +111,6 @@ class MonopolyApp {
     if (rosterEl) {
       rosterEl.innerHTML = '';
 
-      if (this.engine.players.length === 0 && currentUser) {
-        const colors = ['#38bdf8', '#f59e0b', '#10b981', '#ef4444'];
-        this.engine.addPlayer(currentUser.id || 'usr_me', currentUser.username, colors[0], false);
-      }
-
       this.engine.players.forEach(p => {
         const item = document.createElement('div');
         item.className = 'roster-item';

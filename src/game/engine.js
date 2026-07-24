@@ -88,11 +88,6 @@ export class GameEngine {
       name = arg1.name || arg1.username;
       isAI = !!arg1.isAI;
       color = arg1.color;
-    } else if (typeof arg1 === 'string' && (arg1.startsWith('usr_') || arg1.startsWith('p_') || arg1.startsWith('bot_'))) {
-      id = arg1;
-      name = String(arg2);
-      color = arg3;
-      isAI = (arg4 === true);
     } else {
       name = String(arg1);
       isAI = (arg2 === true);
@@ -100,8 +95,8 @@ export class GameEngine {
       id = arg4;
     }
 
-    const cleanName = String(name || '').trim();
-    if (!cleanName || cleanName === 'true' || cleanName === 'false' || cleanName.startsWith('usr_') || cleanName.startsWith('p_')) {
+    let cleanName = String(name || '').trim();
+    if (!cleanName || cleanName.toLowerCase() === 'true' || cleanName.toLowerCase() === 'false' || cleanName.toLowerCase().startsWith('usr_') || cleanName.toLowerCase().startsWith('p_')) {
       return false;
     }
 
