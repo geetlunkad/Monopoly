@@ -50,22 +50,31 @@ class MonopolyApp {
       }
     };
 
-    if (user.username === 'GE') {
-      const roomCode = this.mpManager.createLobby(user);
-      this.engine.addPlayer('CyberBot 1', true, '#10b981');
-      this.engine.addPlayer('CyberBot 2', true, '#ef4444');
-      const el = document.getElementById('inviteCodeText');
-      if (el) el.innerText = roomCode;
-    } else {
-      // Non-GE guest joins the host session MONO-GE
-      const targetRoom = 'MONO-GE';
-      const el = document.getElementById('inviteCodeText');
-      if (el) el.innerText = targetRoom;
-      this.mpManager.joinLobby(targetRoom, user, (joined) => {
-        if (joined) {
-          console.log(`Joined online room ${targetRoom} successfully.`);
+    try {
+      if (user.username === 'GE') {
+        const roomCode = this.mpManager.createLobby(user);
+        if (this.engine.players.length === 1) {
+          this.engine.addPlayer('CyberBot 1', true, '#10b981');
+          this.engine.addPlayer('CyberBot 2', true, '#ef4444');
         }
-      });
+        const el = document.getElementById('inviteCodeText');
+        if (el) el.innerText = roomCode;
+      } else {
+        const targetRoom = 'MONO-GE';
+        const el = document.getElementById('inviteCodeText');
+        if (el) el.innerText = targetRoom;
+        
+        let player = this.engine.players.find(p => p.name === user.username);
+        if (!player) {
+          this.engine.addPlayer(user.username, false, '#f59e0b');
+        }
+
+        this.mpManager.joinLobby(targetRoom, user, (joined) => {
+          console.log('Join lobby result:', joined);
+        });
+      }
+    } catch (err) {
+      console.warn('Lobby setup warning:', err);
     }
 
     this.updateLobbyUI(user);
@@ -136,12 +145,14 @@ class MonopolyApp {
     const btnQuickGE = document.getElementById('btnQuickLoginGE');
     if (btnQuickGE) {
       btnQuickGE.onclick = () => {
-        const res = globalAuthStore.login('GE', 'geetelectric');
+        const pass = prompt('🔑 Enter Master GE Password:');
+        if (pass === null) return;
+        const res = globalAuthStore.login('GE', pass);
         if (res.success) {
-          this.setupLobby(res.user);
           this.showScreen('LOBBY');
+          this.setupLobby(res.user);
         } else {
-          alert('❌ Master GE login failed.');
+          alert('❌ Incorrect password for Master GE! (Password is: geetelectric)');
         }
       };
     }
@@ -158,8 +169,8 @@ class MonopolyApp {
 
         const res = globalAuthStore.login(u, p);
         if (res.success) {
-          this.setupLobby(res.user);
           this.showScreen('LOBBY');
+          this.setupLobby(res.user);
         } else {
           alert(`❌ Login failed: ${res.error}`);
         }
