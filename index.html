@@ -4,26 +4,24 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Monopoly — Online Multiplayer</title>
-  <meta name="description" content="Real-time multiplayer Monopoly — play with friends worldwide.">
+  <meta name="description" content="Real-time multiplayer Monopoly — just enter your name and play.">
 
-  <!-- Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;900&display=swap" rel="stylesheet">
 
-  <!-- Stylesheets -->
   <link rel="stylesheet" href="./src/css/main.css">
   <link rel="stylesheet" href="./src/css/board.css">
   <link rel="stylesheet" href="./src/css/modal.css">
   <link rel="stylesheet" href="./src/css/admin.css">
 
   <style>
-    /* ── Login Form Styles ──────────────────────────────────────────────────── */
+    /* ── Login Form ─────────────────────────────────────────────────────── */
     .login-form {
       display: flex;
       flex-direction: column;
       gap: 14px;
-      margin: 24px 0;
+      margin: 28px 0 20px;
     }
 
     .login-input-group {
@@ -34,10 +32,10 @@
     }
 
     .login-input-group label {
-      font-size: 0.82rem;
+      font-size: 0.78rem;
       font-weight: 700;
       color: var(--text-muted, #94a3b8);
-      letter-spacing: 0.05em;
+      letter-spacing: 0.06em;
       text-transform: uppercase;
     }
 
@@ -60,262 +58,225 @@
       box-shadow: 0 0 0 3px rgba(56,189,248,0.18);
     }
 
-    .login-input::placeholder {
-      color: rgba(255,255,255,0.3);
+    .login-input::placeholder { color: rgba(255,255,255,0.28); }
+
+    #loginStatusMsg {
+      min-height: 1.4em;
+      font-size: 0.88rem;
+      text-align: center;
+      color: #64748b;
+      transition: color 0.2s;
     }
 
     .login-hint {
       font-size: 0.78rem;
       color: var(--text-muted, #64748b);
       text-align: center;
-      margin-top: 4px;
-      line-height: 1.5;
+      line-height: 1.6;
     }
 
-    .login-hint strong {
-      color: var(--accent-gold, #f59e0b);
-    }
+    .login-hint strong { color: var(--accent-gold, #f59e0b); }
 
-    #loginStatusMsg {
-      min-height: 1.4em;
-      font-size: 0.88rem;
-      text-align: center;
-      color: var(--text-muted, #64748b);
-      transition: color 0.2s;
-    }
-
-    .connection-badge {
+    /* Live badge */
+    .live-badge {
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      font-size: 0.75rem;
+      font-size: 0.72rem;
       font-weight: 700;
-      color: var(--text-muted, #64748b);
-      letter-spacing: 0.04em;
+      color: #64748b;
+      letter-spacing: 0.06em;
       text-transform: uppercase;
-      margin-bottom: 8px;
+      margin-bottom: 6px;
     }
 
-    .connection-badge .dot {
-      width: 7px;
-      height: 7px;
+    .live-badge .dot {
+      width: 7px; height: 7px;
       border-radius: 50%;
       background: #22c55e;
-      animation: pulse-dot 2s infinite;
+      animation: blink 2s infinite;
     }
 
-    @keyframes pulse-dot {
-      0%, 100% { opacity: 1; transform: scale(1); }
-      50%       { opacity: 0.5; transform: scale(0.75); }
+    @keyframes blink {
+      0%, 100% { opacity: 1; } 50% { opacity: 0.35; }
+    }
+
+    /* Player count in lobby */
+    #lobbyPlayerCount {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      text-align: center;
+      margin-bottom: 10px;
+      font-weight: 500;
     }
   </style>
 </head>
 <body>
+<div id="app">
 
-  <div id="app">
-    <!-- Navbar Header -->
-    <header class="navbar glass-panel">
-      <div class="brand">
-        <span>🎲 MONOPOLY</span>
-      </div>
+  <!-- Navbar -->
+  <header class="navbar glass-panel">
+    <div class="brand"><span>🎲 MONOPOLY</span></div>
+    <div class="nav-actions">
+      <button class="btn btn-danger" id="btnResetGame" style="display:none;" title="Return to Lobby">🔄 New Game</button>
+      <button class="btn btn-primary" id="btnAdminPanel">🛡️ Admin</button>
+      <button class="btn" id="btnAuthUser">👤 Login</button>
+      <button class="btn" id="btnToggleTheme" title="Toggle Theme">🌙</button>
+    </div>
+  </header>
 
-      <div class="nav-actions">
-        <button class="btn btn-danger" id="btnResetGame" style="display: none;" title="Dismiss Current Game & Start New Session">🔄 New Game</button>
-        <button class="btn btn-primary" id="btnAdminPanel">🛡️ Admin Panel</button>
-        <button class="btn" id="btnAuthUser">👤 Login</button>
-        <button class="btn" id="btnToggleTheme" title="Toggle Light/Dark Theme">🌙</button>
-      </div>
-    </header>
+  <!-- ════════════════════════════════════════════════ -->
+  <!-- 1. LOGIN SCREEN                                  -->
+  <!-- ════════════════════════════════════════════════ -->
+  <section id="loginScreen" class="screen-view active">
+    <div class="screen-card">
+      <div class="hero-brand">🎲 MONOPOLY</div>
+      <div class="live-badge"><span class="dot"></span> Live Multiplayer</div>
+      <p class="hero-subtitle" style="margin-top:4px;">Enter your name to join the game</p>
 
-    <!-- ══════════════════════════════════════════════════════════ -->
-    <!-- 1. LOGIN SCREEN                                            -->
-    <!-- ══════════════════════════════════════════════════════════ -->
-    <section id="loginScreen" class="screen-view active">
-      <div class="screen-card">
-        <div class="hero-brand">🎲 MONOPOLY</div>
-        <div class="connection-badge">
-          <span class="dot"></span>
-          Live Server Connected
+      <form class="login-form" id="loginForm" autocomplete="off">
+        <div class="login-input-group">
+          <label for="loginUsername">Your Name</label>
+          <input
+            type="text"
+            id="loginUsername"
+            class="login-input"
+            placeholder="e.g. Alice, Bob…"
+            maxlength="24"
+            autocomplete="off"
+            required
+          >
         </div>
-        <p class="hero-subtitle">Enter your name to join or create a room</p>
 
-        <form class="login-form" id="loginForm" autocomplete="off">
-          <div class="login-input-group">
-            <label for="loginUsername">Your Name</label>
-            <input
-              type="text"
-              id="loginUsername"
-              class="login-input"
-              placeholder="e.g. Alice, GE, Bob…"
-              maxlength="24"
-              autocomplete="off"
-              required
-            >
+        <div class="login-input-group">
+          <label for="loginPassword">
+            Password
+            <span style="font-weight:400;text-transform:none;font-size:0.75rem;">(only needed for GE)</span>
+          </label>
+          <input
+            type="password"
+            id="loginPassword"
+            class="login-input"
+            placeholder="Leave blank to skip"
+            autocomplete="current-password"
+          >
+        </div>
+
+        <div id="loginStatusMsg"></div>
+
+        <button type="submit" class="btn btn-primary" id="btnLoginSubmit"
+          style="padding:15px;font-size:1.05rem;font-weight:800;justify-content:center;">
+          🚀 Enter Game
+        </button>
+      </form>
+
+      <div class="login-hint">
+        New players are registered automatically.<br>
+        <strong>GE</strong> uses the master password to control and start the game.
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════════════════════════════════════════════ -->
+  <!-- 2. LOBBY SCREEN                                  -->
+  <!-- ════════════════════════════════════════════════ -->
+  <section id="lobbyScreen" class="screen-view">
+    <div class="screen-card" style="max-width:580px;">
+
+      <div style="text-align:center;margin-bottom:20px;">
+        <h2 style="color:var(--accent-primary);">🎮 Game Lobby</h2>
+        <div style="font-size:0.9rem;color:var(--text-muted);margin-top:4px;">
+          Logged in as: <strong id="lobbyLoggedUser" style="color:var(--accent-warn);">—</strong>
+        </div>
+      </div>
+
+      <!-- Host controls — only visible to GE -->
+      <div id="geMasterControls" style="display:none;">
+        <div style="background:var(--surface-variant);border:1px solid var(--surface-border);border-radius:12px;padding:16px;margin-bottom:20px;">
+          <h3 style="color:var(--accent-warn);margin-bottom:12px;">⚙️ Game Rules</h3>
+
+          <div class="setting-row">
+            <div><div class="setting-label">Starting Cash</div><div class="setting-desc">Initial money per player</div></div>
+            <input type="number" id="lobbyStartingCash" value="1500" class="form-input" style="width:90px;padding:8px;border-radius:8px;">
           </div>
 
-          <div class="login-input-group">
-            <label for="loginPassword">Password <span style="font-weight:400;text-transform:none;">(optional for most players)</span></label>
-            <input
-              type="password"
-              id="loginPassword"
-              class="login-input"
-              placeholder="Leave blank to skip"
-              autocomplete="current-password"
-            >
+          <div class="setting-row">
+            <div><div class="setting-label">Free Parking Jackpot</div><div class="setting-desc">Taxes pool at Free Parking</div></div>
+            <label class="switch"><input type="checkbox" id="lobbyJackpot" checked><span class="slider"></span></label>
           </div>
 
-          <div id="loginStatusMsg"></div>
+          <div class="setting-row">
+            <div><div class="setting-label">Rent in Jail</div><div class="setting-desc">Jailed players can collect rent</div></div>
+            <label class="switch"><input type="checkbox" id="lobbyRentInJail"><span class="slider"></span></label>
+          </div>
 
-          <button type="submit" class="btn btn-primary" id="btnLoginSubmit" style="padding: 15px; font-size: 1.05rem; font-weight: 800; justify-content: center;">
-            🚀 Enter Game
+          <div class="setting-row">
+            <div><div class="setting-label">Property Auctions</div><div class="setting-desc">Auction unsold properties</div></div>
+            <label class="switch"><input type="checkbox" id="lobbyAuctions" checked><span class="slider"></span></label>
+          </div>
+        </div>
+
+        <div style="display:flex;gap:10px;margin-bottom:16px;">
+          <button class="btn btn-accent" id="btnLobbyAddBot" style="flex:1;justify-content:center;padding:12px;">
+            🤖 Add AI Bot
           </button>
-        </form>
-
-        <div class="login-hint">
-          New players are registered automatically.<br>
-          <strong>Host GE</strong> requires the master password to control the game.
-        </div>
-      </div>
-    </section>
-
-    <!-- ══════════════════════════════════════════════════════════ -->
-    <!-- 2. LOBBY SCREEN                                            -->
-    <!-- ══════════════════════════════════════════════════════════ -->
-    <section id="lobbyScreen" class="screen-view">
-      <div class="screen-card" style="max-width: 600px;">
-        <div class="screen-header" style="margin-bottom: 16px; text-align: center;">
-          <h2 style="color: var(--accent-primary);">🎮 Game Lobby</h2>
-          <div style="font-size: 0.9rem; color: var(--text-muted); margin-top: 4px;">
-            Logged in as: <strong id="lobbyLoggedUser" style="color: var(--accent-warn);">—</strong>
-          </div>
-        </div>
-
-        <!-- Room Code Banner -->
-        <div style="background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 12px; padding: 14px; margin-bottom: 20px; text-align: center;">
-          <div style="font-size: 0.85rem; color: var(--text-muted); font-weight: 700;">🌐 ROOM CODE — share with friends</div>
-          <div style="font-size: 2rem; font-weight: 900; letter-spacing: 4px; color: var(--accent-neon-blue, #38bdf8); margin: 6px 0; font-family: monospace;" id="inviteCodeText">——</div>
-          <div style="display: flex; gap: 8px; justify-content: center; margin-top: 10px; flex-wrap: wrap;">
-            <button class="btn btn-sm" id="btnCopyInviteLink" style="padding: 6px 14px; font-size: 0.82rem;">📋 Copy Join Link</button>
-          </div>
-          <!-- Join by code (for non-host players) -->
-          <div style="display: flex; gap: 8px; margin-top: 12px; justify-content: center;" id="joinRoomInputContainer">
-            <input
-              type="text"
-              id="inputJoinRoomCode"
-              placeholder="Enter room code…"
-              class="form-input"
-              style="max-width: 200px; font-size: 0.85rem; padding: 6px 10px; text-transform: uppercase; letter-spacing: 2px; font-family: monospace;"
-              maxlength="6"
-            >
-            <button class="btn btn-emerald btn-sm" id="btnJoinRoomSubmit" style="padding: 6px 14px; font-size: 0.82rem;">🔗 Join Room</button>
-          </div>
-        </div>
-
-        <!-- Host Controls (shown only to GE / admin) -->
-        <div id="geMasterControls" style="display: none;">
-          <div style="background: var(--surface-variant); border: 1px solid var(--surface-border); border-radius: 12px; padding: 16px; margin-bottom: 20px;">
-            <h3 style="color: var(--accent-warn); margin-bottom: 12px;">⚙️ Pre-Game Rules & Cash Setup</h3>
-
-            <div class="setting-row">
-              <div>
-                <div class="setting-label">Starting Cash</div>
-                <div class="setting-desc">Initial money for all players</div>
-              </div>
-              <input type="number" id="lobbyStartingCash" value="1500" style="width: 90px; padding: 8px; border-radius: 8px;" class="form-input">
-            </div>
-
-            <div class="setting-row">
-              <div>
-                <div class="setting-label">Free Parking Jackpot</div>
-                <div class="setting-desc">Taxes pool in Free Parking</div>
-              </div>
-              <label class="switch">
-                <input type="checkbox" id="lobbyJackpot" checked>
-                <span class="slider"></span>
-              </label>
-            </div>
-
-            <div class="setting-row">
-              <div>
-                <div class="setting-label">Rent in Jail</div>
-                <div class="setting-desc">Players in jail can collect rent</div>
-              </div>
-              <label class="switch">
-                <input type="checkbox" id="lobbyRentInJail">
-                <span class="slider"></span>
-              </label>
-            </div>
-
-            <div class="setting-row">
-              <div>
-                <div class="setting-label">Property Auctions</div>
-                <div class="setting-desc">Auction unpurchased properties</div>
-              </div>
-              <label class="switch">
-                <input type="checkbox" id="lobbyAuctions" checked>
-                <span class="slider"></span>
-              </label>
-            </div>
-          </div>
-
-          <div style="display: flex; gap: 10px; margin-bottom: 16px;">
-            <button class="btn btn-accent" id="btnLobbyAddBot" style="flex: 1; justify-content: center; padding: 12px;">
-              🤖 Add AI Bot
-            </button>
-            <button class="btn btn-danger" id="btnResetSession" style="flex: 1; justify-content: center; padding: 12px; background: rgba(239,68,68,0.2); border: 1px solid rgba(239,68,68,0.5);">
-              🧹 Reset Session
-            </button>
-          </div>
-
-          <button class="btn btn-primary" id="btnStartGameLaunch" style="width: 100%; padding: 16px; font-size: 1.15rem; font-weight: 900; justify-content: center;">
-            🚀 START GAME
+          <button class="btn btn-danger" id="btnResetSession"
+            style="flex:1;justify-content:center;padding:12px;background:rgba(239,68,68,0.2);border:1px solid rgba(239,68,68,0.5);">
+            🧹 Reset Session
           </button>
         </div>
 
-        <!-- Guest waiting notice -->
-        <div id="guestWaitingNotice" style="display: none; text-align: center; padding: 20px; background: var(--surface-variant); border-radius: 12px; margin-bottom: 20px;">
-          <div style="font-size: 1.8rem; margin-bottom: 8px;">⏳</div>
-          <h3 style="color: var(--accent-warn);">Waiting for Game Host</h3>
-          <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 6px;">
-            The host will start the game once everyone is in the lobby.<br>
-            You'll be taken to the board automatically.
-          </p>
-        </div>
-
-        <!-- Player Roster -->
-        <div style="margin-top: 16px;">
-          <h3 style="margin-bottom: 10px; color: var(--accent-primary);">👥 Connected Players</h3>
-          <div id="lobbyPlayerList" class="player-roster"></div>
-        </div>
+        <button class="btn btn-primary" id="btnStartGameLaunch"
+          style="width:100%;padding:16px;font-size:1.15rem;font-weight:900;justify-content:center;">
+          🚀 START GAME
+        </button>
       </div>
-    </section>
 
-    <!-- ══════════════════════════════════════════════════════════ -->
-    <!-- 3. MAIN GAME BOARD SCREEN                                  -->
-    <!-- ══════════════════════════════════════════════════════════ -->
-    <main id="gameScreen" class="game-container screen-view">
-      <div id="boardContainer"></div>
-      <div id="controlsContainer"></div>
-    </main>
-
-    <!-- Admin Panel Overlay -->
-    <div class="modal-backdrop" id="adminModalBackdrop">
-      <div class="modal-content" style="max-width: 900px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-          <h2>🛡️ Admin Management</h2>
-          <button class="close-btn" id="closeAdminModal">✕</button>
-        </div>
-        <div id="adminPanelContainer"></div>
+      <!-- Guest waiting notice -->
+      <div id="guestWaitingNotice" style="display:none;text-align:center;padding:24px;background:var(--surface-variant);border-radius:12px;margin-bottom:20px;">
+        <div style="font-size:2rem;margin-bottom:10px;">⏳</div>
+        <h3 style="color:var(--accent-warn);">Waiting for GE to Start</h3>
+        <p style="font-size:0.85rem;color:var(--text-muted);margin-top:8px;line-height:1.6;">
+          You're in the lobby. GE will start the game when everyone is ready.<br>
+          You'll be taken to the board automatically.
+        </p>
       </div>
-    </div>
 
-    <!-- Generic Modal Container -->
-    <div class="modal-backdrop" id="modalBackdrop">
-      <div class="modal-content" id="modalContent"></div>
-    </div>
+      <!-- Player roster -->
+      <div>
+        <div id="lobbyPlayerCount" style="font-size:0.82rem;color:var(--text-muted);text-align:center;margin-bottom:10px;"></div>
+        <h3 style="margin-bottom:10px;color:var(--accent-primary);">👥 Connected Players</h3>
+        <div id="lobbyPlayerList" class="player-roster"></div>
+      </div>
 
+    </div>
+  </section>
+
+  <!-- ════════════════════════════════════════════════ -->
+  <!-- 3. GAME BOARD                                    -->
+  <!-- ════════════════════════════════════════════════ -->
+  <main id="gameScreen" class="game-container screen-view">
+    <div id="boardContainer"></div>
+    <div id="controlsContainer"></div>
+  </main>
+
+  <!-- Admin Modal -->
+  <div class="modal-backdrop" id="adminModalBackdrop">
+    <div class="modal-content" style="max-width:900px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+        <h2>🛡️ Admin Management</h2>
+        <button class="close-btn" id="closeAdminModal">✕</button>
+      </div>
+      <div id="adminPanelContainer"></div>
+    </div>
   </div>
 
-  <script type="module" src="./src/main.js"></script>
+  <!-- Generic Modal -->
+  <div class="modal-backdrop" id="modalBackdrop">
+    <div class="modal-content" id="modalContent"></div>
+  </div>
+
+</div>
+<script type="module" src="./src/main.js"></script>
 </body>
 </html>

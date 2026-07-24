@@ -1,4 +1,4 @@
-// Main Application Entry Point — Vercel-backed Multiplayer Monopoly
+// Main Application Entry Point — Single Global Session Multiplayer
 
 import { GameEngine } from './game/engine.js';
 import { MultiplayerManager } from './game/multiplayer.js';
@@ -24,15 +24,12 @@ class MonopolyApp {
   }
 
   async init() {
-    // Render Static Board & Controls
     this.boardUI.renderBoard();
     this.controlsUI.renderControls();
-
-    // Bind all event listeners
     this.bindEvents();
 
-    // Attempt to restore existing session from stored token
-    this._setLoginStatus('Restoring session…', false);
+    // Try to restore session from stored token
+    this._setLoginStatus('Connecting…', false);
     const user = await globalAuthStore.validateSession();
 
     if (user) {
@@ -50,7 +47,7 @@ class MonopolyApp {
     const el = document.getElementById('loginStatusMsg');
     if (!el) return;
     el.textContent = msg;
-    el.style.color = isError ? 'var(--accent-red, #ef4444)' : 'var(--text-muted, #94a3b8)';
+    el.style.color = isError ? '#ef4444' : '#94a3b8';
   }
 
   _setLoginLoading(loading) {
@@ -63,11 +60,13 @@ class MonopolyApp {
   // ── Lobby Setup ───────────────────────────────────────────────────────────
 
   async setupLobby(user) {
-    // Update lobby label
+    const isHost = user.username === 'GE' || user.role === 'ADMIN';
+    this.mpManager.isHost = isHost;
+
     const userLabel = document.getElementById('lobbyLoggedUser');
     if (userLabel) userLabel.innerText = `${user.avatar || ''} ${user.username}`.trim();
 
-    // Wire multiplayer callbacks
+    // Wire state-sync callback
     this.mpManager.onStateSynced = (state) => {
       this.updateLobbyUI(user);
       this.updateUI();
@@ -77,35 +76,18 @@ class MonopolyApp {
     };
 
     try {
-      const isHost = user.username === 'GE' || user.role === 'ADMIN';
+      // Everyone calls joinGlobalRoom — GE creates it if needed, others join
+      await this.mpManager.joinGlobalRoom(user);
 
+      // If GE, ensure their player entry exists with the right ID
       if (isHost) {
-        // Host: create a new room
-        const roomCode = await this.mpManager.createRoom(user);
-        console.log('[App] Room created:', roomCode);
-
-        // Add default AI bots if starting fresh
-        if (this.engine.players.length <= 1) {
-          this.engine.addPlayer({ id: 'bot_1', name: 'CyberBot 1', isAI: true, color: '#10b981' });
-          this.engine.addPlayer({ id: 'bot_2', name: 'CyberBot 2', isAI: true, color: '#ef4444' });
+        const geExists = this.engine.players.find(p => p.id === user.id || p.name === 'GE');
+        if (!geExists) {
+          this.engine.addPlayer({ id: user.id, name: user.username, isAI: false, color: '#38bdf8' });
           await this.mpManager.broadcastState();
-        }
-      } else {
-        // Non-host: try to join GE's room or wait in lobby
-        // Check URL hash for direct room code (e.g., #join=AB12CD)
-        const hashMatch = window.location.hash.match(/join=([A-Z0-9]{6})/i);
-        if (hashMatch) {
-          const code = hashMatch[1].toUpperCase();
-          try {
-            await this.mpManager.joinRoom(code, user);
-            window.location.hash = '';
-          } catch (err) {
-            console.warn('[App] Hash join failed:', err.message);
-          }
         }
       }
 
-      // If game is already in progress, jump straight to board
       if (this.engine.status === 'PLAYING') {
         this.showScreen('GAME');
       } else {
@@ -113,7 +95,13 @@ class MonopolyApp {
       }
     } catch (err) {
       console.error('[App] Lobby setup error:', err);
-      this.showScreen('LOBBY');
+      // Show a useful message if game is in progress
+      if (err.message && err.message.includes('in progress')) {
+        this._setLoginStatus(`⚠️ ${err.message}`, true);
+        this.showScreen('LOBBY'); // still show lobby so they can see what's happening
+      } else {
+        this.showScreen('LOBBY');
+      }
     }
 
     this.updateLobbyUI(user);
@@ -123,18 +111,10 @@ class MonopolyApp {
 
   showScreen(screenId) {
     this.currentScreen = screenId;
-    const screens = {
-      LOGIN: document.getElementById('loginScreen'),
-      LOBBY: document.getElementById('lobbyScreen'),
-      GAME: document.getElementById('gameScreen')
-    };
-
-    Object.keys(screens).forEach(id => {
-      if (screens[id]) {
-        screens[id].classList.toggle('active', id === screenId);
-      }
+    ['LOGIN', 'LOBBY', 'GAME'].forEach(id => {
+      const el = document.getElementById(id.toLowerCase() + 'Screen');
+      if (el) el.classList.toggle('active', id === screenId);
     });
-
     this.updateUI();
   }
 
@@ -157,8 +137,8 @@ class MonopolyApp {
         item.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;margin-bottom:6px;';
         item.innerHTML = `
           <div style="display:flex;align-items:center;gap:10px;">
-            <div style="width:14px;height:14px;border-radius:50%;background:${p.color || '#38bdf8'};border:2px solid #fff;"></div>
-            <strong style="color:var(--text-main);font-size:0.95rem;">${p.name} ${p.isAI ? '🤖 (Bot)' : ''} ${p.name === 'GE' ? '👑 (Host)' : ''}</strong>
+            <div style="width:14px;height:14px;border-radius:50%;background:${p.color || '#38bdf8'};border:2px solid #fff;flex-shrink:0;"></div>
+            <strong style="color:var(--text-main);font-size:0.95rem;">${p.name}${p.isAI ? ' 🤖' : ''}${p.name === 'GE' ? ' 👑' : ''}</strong>
           </div>
           <div style="display:flex;align-items:center;gap:10px;">
             <span style="font-size:0.85rem;color:var(--accent-gold);font-weight:700;">$${p.money}</span>
@@ -177,10 +157,12 @@ class MonopolyApp {
       });
     }
 
-    // Update room code display
-    const codeEl = document.getElementById('inviteCodeText');
-    if (codeEl && this.mpManager.roomCode) {
-      codeEl.innerText = this.mpManager.roomCode;
+    // Update connected player count
+    const countEl = document.getElementById('lobbyPlayerCount');
+    if (countEl) {
+      const human = this.engine.players.filter(p => !p.isAI).length;
+      const bots = this.engine.players.filter(p => p.isAI).length;
+      countEl.textContent = `${human} player${human !== 1 ? 's' : ''}${bots ? ` + ${bots} bot${bots !== 1 ? 's' : ''}` : ''} connected`;
     }
   }
 
@@ -188,7 +170,7 @@ class MonopolyApp {
 
   bindEvents() {
 
-    // ── 1. LOGIN FORM ────────────────────────────────────────────────────────
+    // ── LOGIN FORM ───────────────────────────────────────────────────────────
     const loginForm = document.getElementById('loginForm');
     if (loginForm) {
       loginForm.addEventListener('submit', async (e) => {
@@ -202,10 +184,9 @@ class MonopolyApp {
         }
 
         this._setLoginLoading(true);
-        this._setLoginStatus('Connecting to server…', false);
+        this._setLoginStatus('Connecting…', false);
 
         const res = await globalAuthStore.login(username, password);
-
         this._setLoginLoading(false);
 
         if (!res.success) {
@@ -214,58 +195,18 @@ class MonopolyApp {
         }
 
         this.mpManager.setToken(globalAuthStore.getToken());
-        this._setLoginStatus('✅ Logged in! Setting up lobby…', false);
+        this._setLoginStatus('✅ Joined! Loading lobby…', false);
         await this.setupLobby(res.user);
       });
     }
 
-    // ── 2. COPY INVITE LINK ──────────────────────────────────────────────────
-    const btnCopy = document.getElementById('btnCopyInviteLink');
-    if (btnCopy) {
-      btnCopy.onclick = () => {
-        const code = this.mpManager.roomCode || document.getElementById('inviteCodeText')?.innerText || '';
-        if (!code) { alert('No room code available yet.'); return; }
-        const url = `${window.location.origin}${window.location.pathname}#join=${code}`;
-        navigator.clipboard.writeText(url).then(() => {
-          btnCopy.textContent = '✅ Copied!';
-          setTimeout(() => { btnCopy.textContent = '📋 Copy Join Link'; }, 2000);
-        });
-      };
-    }
-
-    // ── 3. JOIN ROOM BY CODE ─────────────────────────────────────────────────
-    const btnJoinSubmit = document.getElementById('btnJoinRoomSubmit');
-    if (btnJoinSubmit) {
-      btnJoinSubmit.onclick = async () => {
-        const code = document.getElementById('inputJoinRoomCode')?.value?.trim()?.toUpperCase();
-        if (!code) { alert('Please enter a room code.'); return; }
-
-        const currentUser = globalAuthStore.getCurrentUser();
-        if (!currentUser) { alert('You must be logged in to join a room.'); return; }
-
-        btnJoinSubmit.disabled = true;
-        btnJoinSubmit.textContent = '⏳ Joining…';
-
-        try {
-          await this.mpManager.joinRoom(code, currentUser);
-          this.updateLobbyUI(currentUser);
-          btnJoinSubmit.textContent = '✅ Joined!';
-        } catch (err) {
-          alert(`❌ ${err.message}`);
-          btnJoinSubmit.textContent = '🔗 Join Room';
-        } finally {
-          btnJoinSubmit.disabled = false;
-        }
-      };
-    }
-
-    // ── 4. GE MASTER CONTROLS ────────────────────────────────────────────────
+    // ── GE MASTER CONTROLS ────────────────────────────────────────────────
     const btnAddBot = document.getElementById('btnLobbyAddBot');
     if (btnAddBot) {
       btnAddBot.onclick = () => {
         const u = globalAuthStore.getCurrentUser();
         if (!u || (u.username !== 'GE' && u.role !== 'ADMIN')) {
-          alert('🔒 Only the host can add AI bots.');
+          alert('🔒 Only GE can add AI bots.');
           return;
         }
         const added = this.mpManager.addAIBot();
@@ -277,12 +218,10 @@ class MonopolyApp {
     const btnResetSession = document.getElementById('btnResetSession');
     if (btnResetSession) {
       btnResetSession.onclick = async () => {
-        if (!confirm('🧹 Reset session? This clears all players and bot config.')) return;
+        if (!confirm('🧹 Reset session? This removes all players and clears the game.')) return;
         this.engine.reset(true);
         const u = globalAuthStore.getCurrentUser();
-        if (u) {
-          this.engine.addPlayer({ id: u.id, name: u.username, isAI: false, color: '#38bdf8' });
-        }
+        if (u) this.engine.addPlayer({ id: u.id, name: u.username, isAI: false, color: '#38bdf8' });
         this.engine.addPlayer({ id: 'bot_1', name: 'CyberBot 1', isAI: true, color: '#10b981' });
         this.engine.addPlayer({ id: 'bot_2', name: 'CyberBot 2', isAI: true, color: '#ef4444' });
         await this.mpManager.broadcastState();
@@ -296,7 +235,12 @@ class MonopolyApp {
       btnStart.onclick = async () => {
         const u = globalAuthStore.getCurrentUser();
         if (!u || (u.username !== 'GE' && u.role !== 'ADMIN')) {
-          alert('🔒 Only the host can start the game!');
+          alert('🔒 Only GE can start the game!');
+          return;
+        }
+
+        if (this.engine.players.length < 2) {
+          alert('⚠️ Need at least 2 players to start!');
           return;
         }
 
@@ -316,7 +260,7 @@ class MonopolyApp {
       };
     }
 
-    // ── 5. NAVBAR ────────────────────────────────────────────────────────────
+    // ── NAVBAR ───────────────────────────────────────────────────────────────
     const btnAuth = document.getElementById('btnAuthUser');
     if (btnAuth) {
       btnAuth.onclick = () => {
@@ -336,17 +280,15 @@ class MonopolyApp {
     const btnReset = document.getElementById('btnResetGame');
     if (btnReset) {
       btnReset.onclick = () => {
-        if (confirm('Dismiss current game and start a new session?')) {
-          this.resetSession();
-        }
+        if (confirm('Dismiss current game and return to lobby?')) this.resetSession();
       };
     }
 
-    // ── 6. GAME CONTROLS ─────────────────────────────────────────────────────
+    // ── GAME CONTROLS ─────────────────────────────────────────────────────
     document.addEventListener('click', (e) => {
       if (e.target?.id === 'btnRollDice' || e.target?.closest('#btnRollDice')) {
         if (this.engine.status !== 'PLAYING') {
-          alert('⚠️ Game has not started yet! The host must click "🚀 START GAME" first.');
+          alert('⚠️ GE must click "🚀 START GAME" first.');
           return;
         }
         const activePlayer = this.engine.getCurrentPlayer();
@@ -355,20 +297,9 @@ class MonopolyApp {
         if (activePlayer.inJail && !this.engine.hasRolled) {
           this.modalUI.showJailOptionsModal(
             activePlayer,
-            () => {
-              const roll = this.engine.rollDice();
-              if (roll) { this.boardUI.animateDiceRoll(roll.die1, roll.die2, () => { this.updateUI(); this.checkTileInteraction(); }); }
-            },
-            () => {
-              const roll = this.engine.payJailFine(activePlayer);
-              if (roll) { this.boardUI.animateDiceRoll(roll.die1, roll.die2, () => { this.updateUI(); this.checkTileInteraction(); }); }
-              else { this.updateUI(); }
-            },
-            () => {
-              const roll = this.engine.useJailCard(activePlayer);
-              if (roll) { this.boardUI.animateDiceRoll(roll.die1, roll.die2, () => { this.updateUI(); this.checkTileInteraction(); }); }
-              else { this.updateUI(); }
-            }
+            () => { const r = this.engine.rollDice(); if (r) this.boardUI.animateDiceRoll(r.die1, r.die2, () => { this.updateUI(); this.checkTileInteraction(); this.mpManager.broadcastState(); }); },
+            () => { const r = this.engine.payJailFine(activePlayer); if (r) this.boardUI.animateDiceRoll(r.die1, r.die2, () => { this.updateUI(); this.checkTileInteraction(); this.mpManager.broadcastState(); }); else { this.updateUI(); this.mpManager.broadcastState(); } },
+            () => { const r = this.engine.useJailCard(activePlayer); if (r) this.boardUI.animateDiceRoll(r.die1, r.die2, () => { this.updateUI(); this.checkTileInteraction(); this.mpManager.broadcastState(); }); else { this.updateUI(); this.mpManager.broadcastState(); } }
           );
         } else {
           const roll = this.engine.rollDice();
@@ -376,7 +307,7 @@ class MonopolyApp {
             this.boardUI.animateDiceRoll(roll.die1, roll.die2, () => {
               this.updateUI();
               this.checkTileInteraction();
-              this.mpManager.broadcastState(); // push after roll
+              this.mpManager.broadcastState();
             });
           }
         }
@@ -397,29 +328,11 @@ class MonopolyApp {
         if (this.engine.status !== 'PLAYING') return;
         const activePlayer = this.engine.getCurrentPlayer();
         if (!activePlayer) return;
-
-        this.modalUI.showTradeModal(
-          this.engine.players,
-          activePlayer,
-          this.engine.boardState,
-          (tradeOffer) => {
-            const success = this.engine.tradeManager.proposeTrade(
-              activePlayer.id,
-              tradeOffer.targetPlayerId,
-              tradeOffer.offerProps,
-              tradeOffer.offerCash,
-              tradeOffer.requestProps,
-              tradeOffer.requestCash
-            );
-            if (success) {
-              this.engine.addLog(`🤝 ${activePlayer.name} offered a trade!`);
-              this.mpManager.broadcastState();
-              this.updateUI();
-            } else {
-              alert('Trade offer invalid.');
-            }
-          }
-        );
+        this.modalUI.showTradeModal(this.engine.players, activePlayer, this.engine.boardState, (tradeOffer) => {
+          const ok = this.engine.tradeManager.proposeTrade(activePlayer.id, tradeOffer.targetPlayerId, tradeOffer.offerProps, tradeOffer.offerCash, tradeOffer.requestProps, tradeOffer.requestCash);
+          if (ok) { this.engine.addLog(`🤝 ${activePlayer.name} proposed a trade!`); this.mpManager.broadcastState(); this.updateUI(); }
+          else alert('Trade offer invalid.');
+        });
       }
     });
 
@@ -428,7 +341,6 @@ class MonopolyApp {
         if (this.engine.status !== 'PLAYING') return;
         const activePlayer = this.engine.getCurrentPlayer();
         if (!activePlayer || activePlayer.isAI) return;
-
         if (confirm(`💥 ${activePlayer.name}, declare bankruptcy?`)) {
           this.engine.declareBankruptcy(activePlayer);
           this.mpManager.broadcastState();
@@ -437,71 +349,49 @@ class MonopolyApp {
       }
     });
 
-    // ── 7. ADMIN PANEL ───────────────────────────────────────────────────────
+    // ── ADMIN PANEL ───────────────────────────────────────────────────────
     const btnAdmin = document.getElementById('btnAdminPanel');
     const adminBackdrop = document.getElementById('adminModalBackdrop');
     const closeAdmin = document.getElementById('closeAdminModal');
+    if (btnAdmin && adminBackdrop) btnAdmin.onclick = () => { this.adminUI.renderAdminPanel(() => this.resetSession()); adminBackdrop.classList.add('active'); };
+    if (closeAdmin && adminBackdrop) closeAdmin.onclick = () => adminBackdrop.classList.remove('active');
 
-    if (btnAdmin && adminBackdrop) {
-      btnAdmin.onclick = () => {
-        this.adminUI.renderAdminPanel(() => this.resetSession());
-        adminBackdrop.classList.add('active');
-      };
-    }
-    if (closeAdmin && adminBackdrop) {
-      closeAdmin.onclick = () => adminBackdrop.classList.remove('active');
-    }
-
-    // ── 8. THEME TOGGLE ──────────────────────────────────────────────────────
+    // ── THEME TOGGLE ──────────────────────────────────────────────────────
     const btnTheme = document.getElementById('btnToggleTheme');
     if (btnTheme) {
       btnTheme.onclick = () => {
-        const curr = document.documentElement.getAttribute('data-theme');
-        const next = curr === 'light' ? 'dark' : 'light';
+        const next = document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
         document.documentElement.setAttribute('data-theme', next);
         btnTheme.innerText = next === 'light' ? '☀️' : '🌙';
       };
     }
 
-    // ── 9. TILE CLICK INSPECTOR ──────────────────────────────────────────────
+    // ── TILE CLICK ────────────────────────────────────────────────────────
     document.addEventListener('click', (e) => {
       const tileEl = e.target.closest('.tile');
       if (tileEl && tileEl.dataset.tileId !== undefined) {
         const tileId = parseInt(tileEl.dataset.tileId);
         const tileData = BOARD_TILES[tileId];
         if (!tileData || tileData.price <= 0) return;
-
         const tileState = this.engine.boardState[tileId];
         const owner = this.engine.players.find(p => p.id === tileState?.ownerId);
         const activePlayer = this.engine.getCurrentPlayer();
         const canBuild = activePlayer ? this.engine.canBuildHouse(activePlayer, tileId) : false;
         const currentLevel = this.engine.getEffectiveBuildingLevel(tileId);
         const isMortgaged = tileState?.mortgaged ?? false;
-
         this.modalUI.showPropertyDeed(
-          tileId,
-          owner ? owner.name : null,
-          !owner && activePlayer && !activePlayer.isAI && this.engine.status === 'PLAYING'
-            ? () => { this.engine.buyProperty(activePlayer, tileId); this.mpManager.broadcastState(); this.updateUI(); }
-            : null,
-          owner && activePlayer && owner.id === activePlayer.id && this.engine.status === 'PLAYING'
-            ? () => { this.engine.buildHouse(activePlayer, tileId); this.mpManager.broadcastState(); this.updateUI(); }
-            : null,
-          owner && activePlayer && owner.id === activePlayer.id && this.engine.status === 'PLAYING'
-            ? () => { this.engine.sellHouse(activePlayer, tileId); this.mpManager.broadcastState(); this.updateUI(); }
-            : null,
-          owner && activePlayer && owner.id === activePlayer.id && this.engine.status === 'PLAYING'
-            ? () => { this.engine.mortgageProperty(activePlayer, tileId); this.mpManager.broadcastState(); this.updateUI(); }
-            : null,
-          owner && activePlayer && owner.id === activePlayer.id && this.engine.status === 'PLAYING'
-            ? () => { this.engine.unmortgageProperty(activePlayer, tileId); this.mpManager.broadcastState(); this.updateUI(); }
-            : null,
+          tileId, owner ? owner.name : null,
+          !owner && activePlayer && !activePlayer.isAI && this.engine.status === 'PLAYING' ? () => { this.engine.buyProperty(activePlayer, tileId); this.mpManager.broadcastState(); this.updateUI(); } : null,
+          owner && activePlayer && owner.id === activePlayer.id && this.engine.status === 'PLAYING' ? () => { this.engine.buildHouse(activePlayer, tileId); this.mpManager.broadcastState(); this.updateUI(); } : null,
+          owner && activePlayer && owner.id === activePlayer.id && this.engine.status === 'PLAYING' ? () => { this.engine.sellHouse(activePlayer, tileId); this.mpManager.broadcastState(); this.updateUI(); } : null,
+          owner && activePlayer && owner.id === activePlayer.id && this.engine.status === 'PLAYING' ? () => { this.engine.mortgageProperty(activePlayer, tileId); this.mpManager.broadcastState(); this.updateUI(); } : null,
+          owner && activePlayer && owner.id === activePlayer.id && this.engine.status === 'PLAYING' ? () => { this.engine.unmortgageProperty(activePlayer, tileId); this.mpManager.broadcastState(); this.updateUI(); } : null,
           canBuild, currentLevel, isMortgaged
         );
       }
     });
 
-    // ── 10. AI TURN HOOK ─────────────────────────────────────────────────────
+    // ── AI TURN HOOK ──────────────────────────────────────────────────────
     this.engine.onStateChange = () => {
       this.updateUI();
       this.mpManager.broadcastState();
@@ -524,14 +414,11 @@ class MonopolyApp {
     if (this.engine.status !== 'PLAYING') return;
     const activePlayer = this.engine.getCurrentPlayer();
     if (!activePlayer || activePlayer.isAI) return;
-
     const tileId = activePlayer.position;
     const tileData = BOARD_TILES[tileId];
     const tileState = this.engine.boardState[tileId];
-
     if (tileData && tileData.price > 0 && !tileState?.ownerId) {
-      this.modalUI.showPropertyDeed(
-        tileId, null,
+      this.modalUI.showPropertyDeed(tileId, null,
         () => { this.engine.buyProperty(activePlayer, tileId); this.mpManager.broadcastState(); this.updateUI(); },
         null
       );
@@ -546,26 +433,19 @@ class MonopolyApp {
     const currentUser = globalAuthStore.getCurrentUser();
     if (currentUser) this.updateLobbyUI(currentUser);
 
-    // Show/hide New Game button
+    const isHost = currentUser && (currentUser.username === 'GE' || currentUser.role === 'ADMIN');
     const btnReset = document.getElementById('btnResetGame');
-    if (btnReset) {
-      const isHost = currentUser && (currentUser.username === 'GE' || currentUser.role === 'ADMIN');
-      btnReset.style.display = isHost ? 'inline-flex' : 'none';
-    }
+    if (btnReset) btnReset.style.display = isHost ? 'inline-flex' : 'none';
 
-    // Auth button label
     const btnAuth = document.getElementById('btnAuthUser');
-    if (btnAuth) {
-      btnAuth.innerText = currentUser ? `👤 ${currentUser.username}` : '👤 Login';
-    }
+    if (btnAuth) btnAuth.innerText = currentUser ? `👤 ${currentUser.username}` : '👤 Login';
 
-    // Roll / End Turn button states
     const activePlayer = this.engine.getCurrentPlayer();
     const btnRoll = document.getElementById('btnRollDice');
     const btnEnd = document.getElementById('btnEndTurn');
 
     if (this.engine.status !== 'PLAYING') {
-      if (btnRoll) { btnRoll.disabled = true; btnRoll.style.opacity = '0.5'; btnRoll.style.cursor = 'not-allowed'; btnRoll.innerText = '⏳ Waiting for Game Start'; }
+      if (btnRoll) { btnRoll.disabled = true; btnRoll.style.opacity = '0.5'; btnRoll.style.cursor = 'not-allowed'; btnRoll.innerText = '⏳ Waiting for GE to Start'; }
       if (btnEnd)  { btnEnd.disabled = true;  btnEnd.style.opacity = '0.5';  btnEnd.style.cursor = 'not-allowed'; }
       return;
     }
@@ -586,7 +466,4 @@ class MonopolyApp {
   }
 }
 
-// Initialize app after DOM is ready
-document.addEventListener('DOMContentLoaded', () => {
-  new MonopolyApp();
-});
+document.addEventListener('DOMContentLoaded', () => { new MonopolyApp(); });

@@ -1,18 +1,19 @@
 /**
  * POST /api/rooms/join
  * Header: Authorization: Bearer <token>
- * Body: { roomCode }
- * Returns: { room }
+ * Body: {} (no room code needed — there is only ONE global session)
  *
- * Joins an existing room. If the player is already in the room,
- * returns the current room state (idempotent). Returns 404 if room not found,
- * 409 if room is full or game already started.
+ * All players automatically join the single global game room.
+ * If the room doesn't exist yet (GE hasn't logged in), it is created here.
+ * Idempotent — safe to call multiple times for the same player.
  */
 
 import { validateToken, setCORS } from '../_auth.js';
 import { getKV } from '../_kv.js';
 
-const PLAYER_COLORS = ['#f59e0b', '#10b981', '#ef4444', '#a855f7', '#ec4899', '#f97316'];
+const GLOBAL_ROOM = 'GLOBAL';
+
+const PLAYER_COLORS = ['#38bdf8', '#f59e0b', '#10b981', '#ef4444', '#a855f7', '#ec4899', '#f97316', '#84cc16'];
 
 export default async function handler(req, res) {
   setCORS(res);
@@ -26,34 +27,59 @@ export default async function handler(req, res) {
   if (auth.error) return res.status(auth.status).json({ error: auth.error });
 
   const { user } = auth;
-  const { roomCode } = req.body || {};
-
-  if (!roomCode || !roomCode.trim()) {
-    return res.status(400).json({ error: 'Room code is required' });
-  }
-
-  const code = roomCode.trim().toUpperCase();
   const kv = await getKV();
-  const room = await kv.get(`monopoly:room:${code}`);
 
+  let room = await kv.get(`monopoly:room:${GLOBAL_ROOM}`);
+
+  // Create the global room if it doesn't exist yet
   if (!room) {
-    return res.status(404).json({ error: `Room "${code}" not found. Ask the host to share their room code.` });
+    const hostPlayer = {
+      id: user.id,
+      name: user.username,
+      isAI: false,
+      isHost: user.role === 'ADMIN' || user.username === 'GE',
+      color: PLAYER_COLORS[0],
+      money: 1500,
+      position: 0,
+      inJail: false,
+      jailTurns: 0,
+      bankrupt: false,
+      properties: [],
+      getOutOfJailCards: 0
+    };
+
+    room = {
+      code: GLOBAL_ROOM,
+      hostId: user.id,
+      hostName: user.username,
+      version: 1,
+      status: 'LOBBY',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      players: [hostPlayer],
+      gameState: null
+    };
+
+    await kv.set(`monopoly:room:${GLOBAL_ROOM}`, room, { ex: 86400 });
+    return res.status(200).json({ room, joined: true });
   }
 
-  // Already in room — idempotent rejoin
+  // Already in room — idempotent rejoin, refresh updatedAt
   const existing = room.players.find(p => p.id === user.id);
   if (existing) {
-    return res.status(200).json({ room });
+    room.updatedAt = Date.now();
+    await kv.set(`monopoly:room:${GLOBAL_ROOM}`, room, { ex: 86400 });
+    return res.status(200).json({ room, joined: false });
+  }
+
+  // Can't join a game already in progress
+  if (room.status === 'PLAYING') {
+    return res.status(409).json({ error: 'A game is already in progress. Please wait for the next session.' });
   }
 
   // Max 8 players
   if (room.players.length >= 8) {
     return res.status(409).json({ error: 'Room is full (max 8 players).' });
-  }
-
-  // Can't join a game that already started
-  if (room.status === 'PLAYING') {
-    return res.status(409).json({ error: 'Game has already started. You cannot join mid-game.' });
   }
 
   // Assign a color not already taken
@@ -79,7 +105,7 @@ export default async function handler(req, res) {
   room.version += 1;
   room.updatedAt = Date.now();
 
-  await kv.set(`monopoly:room:${code}`, room, { ex: 86400 });
+  await kv.set(`monopoly:room:${GLOBAL_ROOM}`, room, { ex: 86400 });
 
-  return res.status(200).json({ room });
+  return res.status(200).json({ room, joined: true });
 }
