@@ -44,6 +44,7 @@ class MonopolyApp {
     if (userLabel) userLabel.innerText = user.username;
 
     this.mpManager.onStateSynced = (state) => {
+      this.updateLobbyUI(user);
       this.updateUI();
       if (state && state.status === 'PLAYING' && this.currentScreen !== 'GAME') {
         this.showScreen('GAME');
@@ -54,11 +55,10 @@ class MonopolyApp {
       if (user.username === 'GE') {
         const roomCode = this.mpManager.createLobby(user);
         if (this.engine.players.length === 1) {
-          this.engine.addPlayer('CyberBot 1', true, '#10b981');
-          this.engine.addPlayer('CyberBot 2', true, '#ef4444');
+          this.engine.addPlayer('bot_1', 'CyberBot 1', '#10b981', true);
+          this.engine.addPlayer('bot_2', 'CyberBot 2', '#ef4444', true);
+          this.mpManager.broadcastState();
         }
-        const el = document.getElementById('inviteCodeText');
-        if (el) el.innerText = roomCode;
       } else {
         const targetRoom = 'MONO-GE';
         const el = document.getElementById('inviteCodeText');
@@ -66,7 +66,7 @@ class MonopolyApp {
         
         let player = this.engine.players.find(p => p.name === user.username);
         if (!player) {
-          this.engine.addPlayer(user.username, false, '#f59e0b');
+          this.engine.addPlayer(user.id || 'usr_' + Date.now(), user.username, '#f59e0b', false);
         }
 
         this.mpManager.joinLobby(targetRoom, user, (joined) => {
@@ -112,17 +112,24 @@ class MonopolyApp {
     const rosterEl = document.getElementById('lobbyPlayerList');
     if (rosterEl) {
       rosterEl.innerHTML = '';
+
+      if (this.engine.players.length === 0 && currentUser) {
+        const colors = ['#38bdf8', '#f59e0b', '#10b981', '#ef4444'];
+        this.engine.addPlayer(currentUser.id || 'usr_me', currentUser.username, colors[0], false);
+      }
+
       this.engine.players.forEach(p => {
         const item = document.createElement('div');
         item.className = 'roster-item';
+        item.style.cssText = 'display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; margin-bottom: 6px;';
         item.innerHTML = `
-          <div style="display: flex; align-items: center; gap: 8px;">
-            <div style="width: 14px; height: 14px; border-radius: 50%; background: ${p.color}; border: 1px solid #fff;"></div>
-            <span>${p.name} ${p.isAI ? '🤖 (Bot)' : ''} ${p.name === 'GE' ? '👑 (Master)' : ''}</span>
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <div style="width: 14px; height: 14px; border-radius: 50%; background: ${p.color || '#38bdf8'}; border: 2px solid #fff;"></div>
+            <strong style="color: var(--text-main); font-size: 0.95rem;">${p.name} ${p.isAI ? '🤖 (Bot)' : ''} ${p.name === 'GE' ? '👑 (Master)' : ''}</strong>
           </div>
           <div style="display: flex; align-items: center; gap: 10px;">
-            <span style="font-size: 0.78rem; color: var(--text-muted);">$${p.money}</span>
-            ${p.isAI && isGE ? `<button class="btn btn-danger btn-sm btn-remove-bot" data-id="${p.id}" style="padding: 2px 8px; font-size: 0.72rem;">✕ Remove</button>` : ''}
+            <span style="font-size: 0.85rem; color: var(--accent-gold); font-weight: 700;">$${p.money}</span>
+            ${p.isAI && isGE ? `<button class="btn btn-danger btn-sm btn-remove-bot" data-id="${p.id}" style="padding: 3px 8px; font-size: 0.75rem;">✕ Remove</button>` : ''}
           </div>
         `;
         rosterEl.appendChild(item);

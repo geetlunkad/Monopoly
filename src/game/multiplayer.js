@@ -1,28 +1,46 @@
-// Real-time WebRTC Multiplayer Room Manager (PeerJS - 100% Free Cross-Device Sync)
+// Hybrid WebRTC + BroadcastChannel Online Multiplayer Synchronization Engine
 
 const Peer = window.Peer || class {};
+const SESSION_STORAGE_KEY = 'monopoly_online_session_v2';
 
 export class MultiplayerManager {
   constructor(gameEngine) {
     this.engine = gameEngine;
-    this.roomCode = null;
+    this.roomCode = 'MONO-GE';
     this.isHost = false;
     this.peer = null;
-    this.connections = []; // Host's connections to guests
-    this.hostConn = null;  // Guest's connection to host
+    this.connections = [];
+    this.hostConn = null;
     this.listeners = [];
     this.onStateSynced = null;
+
+    // Local BroadcastChannel for instant multi-tab sync on same network
+    try {
+      this.channel = new BroadcastChannel('monopoly_sync_channel');
+      this.channel.onmessage = (e) => {
+        if (e.data && e.data.type === 'SYNC_STATE') {
+          this.applySerializedState(e.data.state);
+          if (this.onStateSynced) this.onStateSynced(e.data.state);
+          this.notify();
+        }
+      };
+    } catch (e) {
+      console.warn('BroadcastChannel unavailable:', e);
+    }
   }
 
   createLobby(hostUser) {
-    // Standardize Master GE host room code
-    const randomId = Math.random().toString(36).substring(2, 6).toUpperCase();
-    this.roomCode = hostUser.username === 'GE' ? `MONO-GE` : `MONO-${randomId}`;
+    this.roomCode = 'MONO-GE';
     this.isHost = true;
-    this.engine.reset();
-    this.engine.addPlayer(hostUser.id || 'p_ge', hostUser.username || 'GE', '#38bdf8', false);
+
+    // Ensure Master GE is in players list
+    let gePlayer = this.engine.players.find(p => p.name === 'GE');
+    if (!gePlayer) {
+      this.engine.addPlayer('p_ge', 'GE', '#38bdf8', false);
+    }
 
     this.initPeerServer(this.roomCode);
+    this.broadcastState();
     return this.roomCode;
   }
 
@@ -44,13 +62,13 @@ export class MultiplayerManager {
       this.peer = new Peer(peerId, peerConfig);
 
       this.peer.on('open', (id) => {
-        console.log('PeerJS Host Server listening on Room Code:', id);
+        console.log('Online Host live with Room Code:', id);
         this.engine.addLog(`🌐 WebRTC Room live! Invite Code: ${id}`);
-        this.notify();
+        this.broadcastState();
       });
 
       this.peer.on('connection', (conn) => {
-        console.log('New peer connected to host:', conn.peer);
+        console.log('New player connected to host:', conn.peer);
         this.connections.push(conn);
 
         conn.on('data', (data) => {
@@ -59,36 +77,36 @@ export class MultiplayerManager {
 
         conn.on('close', () => {
           this.connections = this.connections.filter(c => c !== conn);
-          this.engine.addLog(`⚠️ A player disconnected.`);
           this.broadcastState();
         });
 
-        // Immediately send full state snapshot to connected peer
         setTimeout(() => {
           if (conn.open) {
             conn.send({ type: 'SYNC_STATE', state: this.getSerializedState() });
           }
-        }, 300);
+        }, 200);
       });
 
       this.peer.on('error', (err) => {
-        console.warn('PeerJS Host Warning/Error:', err);
-        // Fallback to random ID if ID taken
-        if (err.type === 'unavailable-id') {
-          const fallbackId = `MONO-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
-          this.roomCode = fallbackId;
-          this.initPeerServer(fallbackId);
-        }
+        console.warn('PeerJS Host Error:', err);
       });
     } catch (e) {
-      console.error('Failed to init PeerJS:', e);
+      console.error('Failed to init PeerJS Host:', e);
     }
   }
 
   joinLobby(roomCode, user, onJoined) {
-    const cleanCode = roomCode.trim().toUpperCase();
+    const cleanCode = (roomCode || 'MONO-GE').trim().toUpperCase();
     this.roomCode = cleanCode;
     this.isHost = false;
+
+    // Register guest in engine local state
+    let guestPlayer = this.engine.players.find(p => p.name === user.username);
+    if (!guestPlayer) {
+      const colors = ['#f59e0b', '#10b981', '#ef4444', '#a855f7', '#ec4899'];
+      const color = colors[this.engine.players.length % colors.length];
+      this.engine.addPlayer(user.id || 'usr_' + Date.now(), user.username, color, false);
+    }
 
     try {
       const peerConfig = {
@@ -107,11 +125,10 @@ export class MultiplayerManager {
       this.peer = new Peer(peerConfig);
 
       this.peer.on('open', (myId) => {
-        console.log('Guest Peer initialized with ID:', myId);
         this.hostConn = this.peer.connect(cleanCode, { reliable: true });
 
         this.hostConn.on('open', () => {
-          console.log('Connected to host room:', cleanCode);
+          console.log('Connected to room:', cleanCode);
           this.hostConn.send({
             type: 'JOIN_REQUEST',
             user: { id: user.id || 'p_' + Date.now(), username: user.username }
@@ -126,20 +143,18 @@ export class MultiplayerManager {
             this.notify();
           }
         });
-
-        this.hostConn.on('close', () => {
-          alert('Disconnected from host room.');
-        });
       });
 
       this.peer.on('error', (err) => {
-        console.warn('Guest Peer Error:', err);
+        console.warn('Guest Peer warning:', err);
         if (onJoined) onJoined(false);
       });
     } catch (e) {
       console.error('Failed to join lobby:', e);
       if (onJoined) onJoined(false);
     }
+
+    this.broadcastState();
   }
 
   handleIncomingData(data, conn) {
@@ -147,9 +162,11 @@ export class MultiplayerManager {
 
     if (data.type === 'JOIN_REQUEST') {
       const user = data.user;
-      const existing = this.engine.players.find(p => p.id === user.id || p.name === user.username);
+      let existing = this.engine.players.find(p => p.id === user.id || p.name === user.username);
       if (!existing && this.engine.players.length < 8) {
-        this.engine.addPlayer(user.id, user.username, null, false);
+        const colors = ['#f59e0b', '#10b981', '#ef4444', '#a855f7', '#ec4899'];
+        const color = colors[this.engine.players.length % colors.length];
+        this.engine.addPlayer(user.id, user.username, color, false);
       }
       this.broadcastState();
     } else if (data.type === 'PLAYER_ACTION') {
@@ -197,23 +214,34 @@ export class MultiplayerManager {
   }
 
   broadcastState() {
-    if (!this.isHost) return;
     const state = this.getSerializedState();
-    this.connections.forEach(conn => {
-      if (conn.open) {
-        conn.send({ type: 'SYNC_STATE', state });
-      }
-    });
+    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(state));
+
+    if (this.channel) {
+      try {
+        this.channel.postMessage({ type: 'SYNC_STATE', state });
+      } catch (e) {}
+    }
+
+    if (this.isHost && this.connections) {
+      this.connections.forEach(conn => {
+        if (conn.open) {
+          conn.send({ type: 'SYNC_STATE', state });
+        }
+      });
+    }
     this.notify();
   }
 
   addAIBot() {
-    if (!this.isHost || this.engine.players.length >= 8) return false;
+    if (this.engine.players.length >= 8) return false;
     const botNum = this.engine.players.filter(p => p.isAI).length + 1;
     const botNames = ['CyberBot', 'NexusAI', 'QuantumBot', 'VortexAI'];
     const botName = botNames[botNum - 1] || `Bot #${botNum}`;
-    
-    this.engine.addPlayer('bot_' + Date.now(), botName, null, true);
+    const colors = ['#10b981', '#ef4444', '#a855f7', '#f59e0b'];
+    const color = colors[this.engine.players.length % colors.length];
+
+    this.engine.addPlayer('bot_' + Date.now(), botName, color, true);
     this.broadcastState();
     return true;
   }
@@ -243,18 +271,18 @@ export class MultiplayerManager {
 
   applySerializedState(state) {
     if (!state) return;
-    this.roomCode = state.roomCode;
+    this.roomCode = state.roomCode || 'MONO-GE';
     this.engine.status = state.status;
-    this.engine.players = state.players;
-    this.engine.currentTurnIndex = state.currentTurnIndex;
+    this.engine.players = state.players || [];
+    this.engine.currentTurnIndex = state.currentTurnIndex || 0;
     this.engine.hasRolled = state.hasRolled;
     this.engine.tradeManager.activeTrade = state.activeTrade;
-    this.engine.boardState = state.boardState;
-    this.engine.freeParkingJackpot = state.freeParkingJackpot;
-    this.engine.rules = state.rules;
-    this.engine.logs = state.logs;
+    this.engine.boardState = state.boardState || {};
+    this.engine.freeParkingJackpot = state.freeParkingJackpot || 0;
+    this.engine.rules = state.rules || this.engine.rules;
+    this.engine.logs = state.logs || [];
 
     const el = document.getElementById('inviteCodeText');
-    if (el) el.innerText = state.roomCode || 'MONO-GE';
+    if (el) el.innerText = this.roomCode;
   }
 }
